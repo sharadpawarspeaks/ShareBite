@@ -1,0 +1,1558 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ShareBite | Share Food, Reduce Waste</title>
+    <link rel="icon" type="image/jpeg" href="logo.jpg">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+    <link
+        href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap"
+        rel="stylesheet">
+
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <!-- ================= NAVBAR ================= -->
+
+    <header class="navbar">
+
+        <div class="brand" onclick="showPage('home')">
+            <img src="logo.jpg" alt="ShareBite Logo" class="brand-logo-img">
+            <span>Share<span class="brand-accent">Bite</span></span>
+        </div>
+
+        <nav class="desktop-nav">
+            <a href="#home" onclick="showPage('home')">Home</a>
+            <a href="#about" onclick="scrollToSection('about')">About</a>
+            <a href="#how" onclick="scrollToSection('how')">How it Works</a>
+            <a href="#impact" onclick="scrollToSection('impact')">Impact</a>
+        </nav>
+
+        <div class="nav-actions">
+            <button class="theme-btn" onclick="toggleDarkMode()" title="Dark Mode" aria-label="Toggle Dark Mode">
+                🌙
+            </button>
+
+            <div id="navAuthContainer">
+                <button class="login-nav-btn" onclick="openAuthModal()">
+                    Sign Up / Login
+                </button>
+            </div>
+
+            <button class="mobile-nav-toggle" id="landingNavToggle" onclick="toggleLandingMobileNav()"
+                aria-label="Toggle Navigation">
+                ☰
+            </button>
+        </div>
+
+    </header>
+
+    <div id="landingMobileNav" class="mobile-nav-drawer hidden">
+        <a href="#home" onclick="showPage('home'); closeLandingMobileNav();">Home</a>
+        <a href="#about" onclick="scrollToSection('about'); closeLandingMobileNav();">About</a>
+        <a href="#how" onclick="scrollToSection('how'); closeLandingMobileNav();">How it Works</a>
+        <a href="#impact" onclick="scrollToSection('impact'); closeLandingMobileNav();">Impact</a>
+        <div class="mobile-nav-auth" id="mobileNavAuthContainer"></div>
+    </div>
+
+
+    <!-- ================= HOME PAGE ================= -->
+
+    <main id="homePage" class="page-view">
+
+        <!-- HERO -->
+
+        <div class="hero-wrapper">
+
+            <!-- Video Background for the rest of the screen -->
+            <video class="hero-bg-video" autoplay muted loop playsinline preload="auto">
+                <source src="background-video.mp4" type="video/mp4">
+            </video>
+
+            <section class="hero">
+
+                <div class="hero-content">
+
+                    <h1>
+                        Surplus food.
+                        <span>Someone in need.</span>
+                    </h1>
+
+                    <p>
+                        We connect individuals, restaurants, and organizations with surplus food
+                        to NGOs and communities that need it. Together, we can reduce food waste
+                        and build a hunger-free future.
+                    </p>
+
+                    <div class="hero-buttons">
+
+                        <button class="btn btn-primary" onclick="openRoleModal('donor')">
+                            🍃 Donate Food →
+                        </button>
+
+                        <button class="btn btn-outline" onclick="openRoleModal('ngo')">
+                            👥 Find Food →
+                        </button>
+
+                    </div>
+
+                    <div class="hero-pills">
+
+                        <div class="hero-pill">
+                            <div class="pill-icon-circle green">🍃</div>
+                            <div class="pill-text">
+                                <strong>Reduce</strong>
+                                <span>Food Waste</span>
+                            </div>
+                        </div>
+
+                        <div class="hero-pill">
+                            <div class="pill-icon-circle blue">👥</div>
+                            <div class="pill-text">
+                                <strong>Support</strong>
+                                <span>Communities</span>
+                            </div>
+                        </div>
+
+                        <div class="hero-pill">
+                            <div class="pill-icon-circle red">❤️</div>
+                            <div class="pill-text">
+                                <strong>Build a</strong>
+                                <span>Hunger-Free Future</span>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <div class="hero-stats">
+
+                        <div>
+                            <strong id="heroFood">0 kg</strong>
+                            <span>Food Shared</span>
+                        </div>
+
+                        <div>
+                            <strong id="heroMeals">0</strong>
+                            <span>Meals Supported</span>
+                        </div>
+
+                        <div>
+                            <strong id="heroDonations">0</strong>
+                            <span>Donations</span>
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+        </div>
+
+
+        <!-- ABOUT -->
+
+        <section id="about" class="section">
+
+            <div class="section-title">
+
+                <span class="eyebrow">WHY SHAREBITE?</span>
+
+                <h2>
+                    Don't let good food become waste.
+                </h2>
+
+                <p>
+                    Every day, perfectly edible food is thrown away while
+                    people around us struggle to access nutritious meals.
+                    ShareBite makes it easier to bridge that gap.
+                </p>
+
+            </div>
+
+
+            <div class="feature-grid">
+
+                <div class="feature-card">
+
+                    <div class="feature-icon">🍲</div>
+
+                    <h3>Donate Surplus Food</h3>
+
+                    <p>
+                        Restaurants, households, events and organizations
+                        can easily share excess food with people who need it.
+                    </p>
+
+                </div>
+
+
+                <div class="feature-card">
+
+                    <div class="feature-icon">🤝</div>
+
+                    <h3>Connect With NGOs</h3>
+
+                    <p>
+                        NGOs and orphanages can discover nearby available
+                        food and arrange collection.
+                    </p>
+
+                </div>
+
+
+                <div class="feature-card">
+
+                    <div class="feature-icon">🌱</div>
+
+                    <h3>Reduce Food Waste</h3>
+
+                    <p>
+                        Track how much food you saved from being wasted
+                        and understand your environmental impact.
+                    </p>
+
+                </div>
+
+            </div>
+
+        </section>
+
+
+        <!-- HOW IT WORKS -->
+
+        <section id="how" class="section light-section">
+
+            <div class="section-title center">
+
+                <span class="eyebrow">HOW IT WORKS</span>
+
+                <h2>Three simple steps.</h2>
+
+                <p>
+                    Turning surplus food into meaningful impact is simple.
+                </p>
+
+            </div>
+
+
+            <div class="steps-grid">
+
+                <div class="work-step">
+
+                    <div class="step-number">01</div>
+
+                    <h3>Donate</h3>
+
+                    <p>
+                        Enter the details of your surplus food and upload
+                        a photo.
+                    </p>
+
+                </div>
+
+
+                <div class="work-step">
+
+                    <div class="step-number">02</div>
+
+                    <h3>Connect</h3>
+
+                    <p>
+                        NGOs can discover suitable food donations
+                        available in their area.
+                    </p>
+
+                </div>
+
+
+                <div class="work-step">
+
+                    <div class="step-number">03</div>
+
+                    <h3>Share & Impact</h3>
+
+                    <p>
+                        Food gets collected and distributed while your
+                        positive impact is tracked.
+                    </p>
+
+                </div>
+
+            </div>
+
+        </section>
+
+
+        <!-- IMPACT -->
+
+        <section id="impact" class="section">
+
+            <div class="impact-banner">
+
+                <div>
+
+                    <span class="eyebrow">OUR MISSION</span>
+
+                    <h2>
+                        One donation can become someone's meal.
+                    </h2>
+
+                    <p>
+                        ShareBite helps make sure surplus food reaches
+                        people instead of landfills.
+                    </p>
+
+                </div>
+
+                <button class="btn btn-primary" onclick="openRoleModal('donor')">
+                    Start Donating →
+                </button>
+
+            </div>
+
+        </section>
+
+    </main>
+
+
+    <!-- ================= DONOR DASHBOARD ================= -->
+
+    <main id="donorPage" class="dashboard-page hidden">
+
+        <div id="donorBackdrop" class="sidebar-backdrop" onclick="toggleSidebar('donorPage')"></div>
+
+        <aside class="sidebar">
+
+            <div class="sidebar-brand">
+                <img src="logo.jpg" alt="ShareBite Logo" class="brand-logo-img">
+                <strong>Share<span class="brand-accent">Bite</span></strong>
+            </div>
+
+            <div class="user-role">
+                <span>ACCOUNT</span>
+                <strong id="donorName">Food Donor</strong>
+            </div>
+
+            <nav class="side-nav">
+
+                <button class="side-link active" onclick="donorTab('overview', this)">
+                    🏠 Dashboard
+                </button>
+
+                <button class="side-link" onclick="donorTab('donate', this)">
+                    🍱 Donate Food
+                </button>
+
+                <button class="side-link" onclick="donorTab('history', this)">
+                    📋 Donation History
+                </button>
+
+                <button class="side-link" onclick="donorTab('impact', this)">
+                    🌱 My Impact
+                </button>
+
+                <button class="side-link" onclick="donorTab('notifications', this)">
+                    🔔 Notifications
+                </button>
+
+                <button class="side-link" onclick="donorTab('settings', this)">
+                    ⚙️ Settings
+                </button>
+
+            </nav>
+
+            <button class="logout-side" onclick="logout()">
+                ↪ Logout
+            </button>
+
+        </aside>
+
+
+        <section class="dashboard-main">
+
+            <!-- DONOR OVERVIEW -->
+
+            <div id="donor-overview" class="dashboard-tab">
+
+                <div class="dashboard-heading">
+
+                    <div>
+                        <span class="eyebrow">DONOR DASHBOARD</span>
+                        <h1>Welcome back, <span id="donorWelcome">Donor</span> 👋</h1>
+                        <p>Make a difference with your surplus food.</p>
+                    </div>
+
+                    <button class="btn btn-primary" onclick="donorTab('donate')">
+                        + Donate Food
+                    </button>
+
+                </div>
+
+
+                <div class="stats-grid">
+
+                    <div class="stat-card">
+                        <span>Food Donated</span>
+                        <strong id="donorTotalFood">0 kg</strong>
+                        <small>Food saved from waste</small>
+                    </div>
+
+                    <div class="stat-card">
+                        <span>Donations</span>
+                        <strong id="donorTotalDonations">0</strong>
+                        <small>Total donations</small>
+                    </div>
+
+                    <div class="stat-card">
+                        <span>Meals Supported</span>
+                        <strong id="donorTotalMeals">0</strong>
+                        <small>Estimated meals</small>
+                    </div>
+
+                    <div class="stat-card">
+                        <span>Completed</span>
+                        <strong id="donorCompleted">0</strong>
+                        <small>Successful donations</small>
+                    </div>
+
+                </div>
+
+
+                <div class="content-section">
+
+                    <div class="section-head">
+
+                        <div>
+                            <h2>Recent Donations</h2>
+                            <p>Your latest food donations.</p>
+                        </div>
+
+                        <button class="link-btn" onclick="donorTab('history')">
+                            View all →
+                        </button>
+
+                    </div>
+
+                    <div id="recentDonations" class="donation-grid"></div>
+
+                </div>
+
+
+                <div class="content-section">
+
+                    <div class="section-head">
+
+                        <div>
+                            <h2>Quick Actions</h2>
+                        </div>
+
+                    </div>
+
+                    <div class="quick-grid">
+
+                        <button class="quick-card" onclick="donorTab('donate')">
+                            <span>🍱</span>
+                            <strong>Donate Food</strong>
+                            <small>Share your surplus</small>
+                        </button>
+
+                        <button class="quick-card" onclick="donorTab('history')">
+                            <span>📋</span>
+                            <strong>History</strong>
+                            <small>View donations</small>
+                        </button>
+
+                        <button class="quick-card" onclick="donorTab('impact')">
+                            <span>🌱</span>
+                            <strong>My Impact</strong>
+                            <small>See your contribution</small>
+                        </button>
+
+                        <button class="quick-card" onclick="donorTab('notifications')">
+                            <span>🔔</span>
+                            <strong>Notifications</strong>
+                            <small>View updates</small>
+                        </button>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <!-- DONATE -->
+
+            <div id="donor-donate" class="dashboard-tab hidden">
+
+                <div class="dashboard-heading">
+
+                    <div>
+                        <span class="eyebrow">FOOD DONATION</span>
+                        <h1>Donate Surplus Food</h1>
+                        <p>Give your extra food a second purpose.</p>
+                    </div>
+
+                </div>
+
+
+                <div class="form-card">
+
+                    <form id="donationForm">
+
+                        <div class="form-grid">
+
+                            <div class="form-group">
+
+                                <label>Food Name *</label>
+
+                                <input type="text" id="foodName" placeholder="e.g. Vegetable Biryani" required>
+
+                            </div>
+
+
+                            <div class="form-group">
+
+                                <label>Food Type *</label>
+
+                                <select id="foodType" required>
+
+                                    <option value="">Select food type</option>
+                                    <option>Cooked Food</option>
+                                    <option>Packaged Food</option>
+                                    <option>Fruits</option>
+                                    <option>Vegetables</option>
+                                    <option>Bakery Items</option>
+                                    <option>Dairy Products</option>
+                                    <option>Other</option>
+
+                                </select>
+
+                            </div>
+
+
+                            <div class="form-group">
+
+                                <label>Quantity (kg) *</label>
+
+                                <input type="number" id="foodQuantity" min="0.1" step="0.1" placeholder="e.g. 5"
+                                    required>
+
+                            </div>
+
+
+                            <div class="form-group">
+
+                                <label>Prepared Date *</label>
+
+                                <input type="date" id="preparedDate" required>
+
+                            </div>
+
+
+                            <div class="form-group">
+
+                                <label>Best Before / Expiry *</label>
+
+                                <input type="date" id="expiryDate" required>
+
+                            </div>
+
+
+                            <div class="form-group">
+
+                                <label>Pickup Location *</label>
+
+                                <input type="text" id="pickupLocation" placeholder="Enter pickup location" required>
+
+                            </div>
+
+
+                            <div class="form-group full">
+
+                                <label>Additional Information</label>
+
+                                <textarea id="foodDescription"
+                                    placeholder="Add information about the food, ingredients, packaging, etc."></textarea>
+
+                            </div>
+
+
+                            <div class="form-group full">
+
+                                <label for="foodImage" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                                    <span>Food Image <strong style="color:var(--danger);font-size:12px;">* (Mandatory &bull; AI Verified)</strong></span>
+                                    <span id="foodImageRequirementBadge" class="status pending" style="font-size:10px;padding:2px 8px;">Upload Required</span>
+                                </label>
+
+                                <label class="upload-box" id="foodUploadBox">
+
+                                    <input type="file" id="foodImage" accept="image/jpeg,image/png,image/webp" required>
+
+                                    <span class="upload-icon">📷</span>
+
+                                    <strong>Upload food image <span style="color:var(--danger);">*</span></strong>
+
+                                    <small>
+                                        JPG, PNG or WebP &bull; Real AI Vision automatically verifies genuine food
+                                    </small>
+
+                                </label>
+
+                                <div id="imagePreviewContainer" class="image-preview-container hidden">
+
+                                    <div class="food-preview-wrapper" style="position:relative;display:inline-block;max-width:320px;width:100%;">
+                                        <img id="imagePreview" class="food-preview" alt="Food preview">
+                                        <div id="imageVerificationOverlay" class="image-verification-overlay hidden"></div>
+                                    </div>
+
+                                    <div style="margin-top:10px;display:flex;justify-content:center;gap:10px;flex-wrap:wrap;">
+                                        <button type="button" class="remove-image" onclick="removeImage()">
+                                            🗑️ Remove image
+                                        </button>
+                                        <button type="button" id="btnReanalyzeAI" class="small-btn small-btn-secondary" onclick="triggerAIVisionAnalysis()" style="font-size:11px;">
+                                            🔄 Re-verify with AI
+                                        </button>
+                                    </div>
+
+                                </div>
+
+                                <!-- ================= AI REJECTION ALERT ================= -->
+                                <div id="aiRejectionAlert" class="ai-rejection-alert hidden"
+                                    style="margin-top:14px;background:#fff5f5;border:1.5px solid #feb2b2;border-radius:12px;padding:16px;color:#9b2c2c;">
+
+                                    <div style="display:flex;align-items:flex-start;gap:12px;">
+                                        <span style="font-size:26px;line-height:1;">🚫</span>
+                                        <div style="flex:1;">
+                                            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
+                                                <strong style="font-size:14px;color:#c53030;">Image Rejected by Real AI</strong>
+                                                <span id="aiRejectionBadge" class="status expired" style="font-size:10px;background:#fed7d7;color:#9b2c2c;">Non-Food Rejected</span>
+                                            </div>
+                                            <p id="aiRejectionMessage" style="margin:6px 0 10px 0;font-size:12px;line-height:1.5;color:#4a5568;">
+                                                This image does not depict edible food or groceries. ShareBite requires a genuine food photo for all donations.
+                                            </p>
+                                            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                                                <button type="button" class="btn btn-primary" onclick="document.getElementById('foodImage').click()" style="font-size:11px;padding:7px 14px;background:#e53e3e;border-color:#e53e3e;">
+                                                    📷 Upload a Genuine Food Photo
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                </div>
+
+                                <div id="aiAnalysisCard" class="ai-analysis-card hidden"
+                                    style="margin-top:14px;background:var(--mint);border:1px solid #b8dfc8;border-radius:12px;padding:16px;">
+
+                                    <div
+                                        style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+                                        <strong
+                                            style="color:var(--green-dark);display:flex;align-items:center;gap:6px;font-size:13px;">
+                                            <span>🤖</span> <span id="aiModelBadge">Google Gemini Vision AI</span>
+                                        </strong>
+                                        <span id="aiFreshnessBadge" class="status accepted">Fresh & Safe</span>
+                                    </div>
+
+                                    <div id="aiAnalysisResults"
+                                        style="font-size:12px;line-height:1.6;color:var(--ink);"></div>
+
+                                    <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;">
+                                        <button type="button" class="small-btn" onclick="applyAISuggestions()">
+                                            ✅ Auto-Fill Form with AI Suggestions
+                                        </button>
+                                        <button type="button" class="small-btn small-btn-secondary"
+                                            onclick="document.getElementById('aiAnalysisCard').classList.add('hidden')">
+                                            Dismiss
+                                        </button>
+                                    </div>
+
+                                </div>
+
+                            </div>
+
+                        </div>
+
+
+                        <div class="ai-box">
+
+                            <div class="ai-title">
+                                🤖 AI FOOD PRIORITY
+                            </div>
+
+                            <p>
+                                After submission, ShareBite can analyze the
+                                food information and estimate its urgency
+                                and donation priority.
+                            </p>
+
+                            <div class="priority-result">
+
+                                <span id="priorityBadge" class="priority-badge">
+                                    Not analyzed
+                                </span>
+
+                                <span id="priorityText">
+                                    Complete the form to calculate priority.
+                                </span>
+
+                            </div>
+
+                        </div>
+
+
+                        <div class="form-actions">
+
+                            <button type="button" class="btn btn-secondary" onclick="resetDonationForm()">
+                                Clear
+                            </button>
+
+                            <button type="submit" class="btn btn-primary">
+                                Submit Donation →
+                            </button>
+
+                        </div>
+
+                    </form>
+
+                </div>
+
+            </div>
+
+
+            <!-- HISTORY -->
+
+            <div id="donor-history" class="dashboard-tab hidden">
+
+                <div class="dashboard-heading">
+
+                    <div>
+                        <span class="eyebrow">YOUR ACTIVITY</span>
+                        <h1>Donation History</h1>
+                        <p>Track all your food donations.</p>
+                    </div>
+
+                </div>
+
+                <div id="historyContainer" class="history-container"></div>
+
+            </div>
+
+
+            <!-- IMPACT -->
+
+            <div id="donor-impact" class="dashboard-tab hidden">
+
+                <div class="dashboard-heading">
+
+                    <div>
+                        <span class="eyebrow">YOUR CONTRIBUTION</span>
+                        <h1>Your Impact 🌱</h1>
+                        <p>See how your donations help people and the planet.</p>
+                    </div>
+
+                </div>
+
+
+                <div class="impact-cards">
+
+                    <div class="big-impact-card">
+
+                        <span>🍚</span>
+
+                        <strong id="impactFood">0 kg</strong>
+
+                        <p>Food prevented from becoming waste</p>
+
+                    </div>
+
+
+                    <div class="big-impact-card">
+
+                        <span>🍽️</span>
+
+                        <strong id="impactMeals">0</strong>
+
+                        <p>Estimated meals supported</p>
+
+                    </div>
+
+
+                    <div class="big-impact-card">
+
+                        <span>🌍</span>
+
+                        <strong id="impactDonations">0</strong>
+
+                        <p>Successful food-sharing actions</p>
+
+                    </div>
+
+                </div>
+
+
+                <div class="impact-explanation">
+
+                    <h2>Why your donation matters</h2>
+
+                    <p>
+                        Food waste is not only a social issue but also an
+                        environmental one. When edible food is donated
+                        instead of discarded, resources such as water,
+                        energy and agricultural land are used more efficiently.
+                    </p>
+
+                    <div class="impact-list">
+
+                        <div>
+                            <strong>♻️ Less food waste</strong>
+                            <span>Your surplus food gets another purpose.</span>
+                        </div>
+
+                        <div>
+                            <strong>❤️ More meals</strong>
+                            <span>Food can reach people who need it.</span>
+                        </div>
+
+                        <div>
+                            <strong>🌱 Better environment</strong>
+                            <span>Reducing unnecessary food disposal.</span>
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <!-- NOTIFICATIONS -->
+
+            <div id="donor-notifications" class="dashboard-tab hidden">
+
+                <div class="dashboard-heading">
+
+                    <div>
+                        <span class="eyebrow">UPDATES</span>
+                        <h1>Notifications</h1>
+                        <p>Stay updated about your donations.</p>
+                    </div>
+
+                </div>
+
+                <div id="notificationContainer" class="notification-container"></div>
+
+            </div>
+
+
+            <!-- SETTINGS -->
+
+            <div id="donor-settings" class="dashboard-tab hidden">
+
+                <div class="dashboard-heading">
+
+                    <div>
+                        <span class="eyebrow">ACCOUNT</span>
+                        <h1>Settings</h1>
+                        <p>Manage your ShareBite account.</p>
+                    </div>
+
+                </div>
+
+
+                <div class="settings-card">
+
+                    <div class="setting-row">
+
+                        <div>
+                            <strong>Dark Mode</strong>
+                            <small>Use a darker appearance.</small>
+                        </div>
+
+                        <button id="darkToggleDonor" class="toggle" onclick="toggleDarkMode()">
+                            <i></i>
+                        </button>
+
+                    </div>
+
+
+                    <div class="setting-row">
+
+                        <div>
+                            <strong>Email Notifications</strong>
+                            <small>Receive donation updates.</small>
+                        </div>
+
+                        <button class="toggle on" onclick="toggleSetting(this)">
+                            <i></i>
+                        </button>
+
+                    </div>
+
+
+                    <div class="setting-row">
+
+                        <div>
+                            <strong>Donation Reminders</strong>
+                            <small>Get reminders about pending donations.</small>
+                        </div>
+
+                        <button class="toggle on" onclick="toggleSetting(this)">
+                            <i></i>
+                        </button>
+
+                    </div>
+
+
+                    <div class="setting-row">
+
+                        <div>
+                            <strong>Notification History</strong>
+                            <small>Clear all your received notifications.</small>
+                        </div>
+
+                        <button class="settings-action-btn" onclick="clearNotifications()">
+                            Clear Notifications
+                        </button>
+
+                    </div>
+
+
+                    <div class="setting-row">
+
+                        <div>
+                            <strong>Reset Data</strong>
+                            <small>Clear donations and reset application data.</small>
+                        </div>
+
+                        <button class="settings-action-btn danger" onclick="resetAllData()">
+                            Reset Data
+                        </button>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </section>
+
+    </main>
+
+
+    <!-- ================= NGO DASHBOARD ================= -->
+
+    <main id="ngoPage" class="dashboard-page hidden">
+
+        <div id="ngoBackdrop" class="sidebar-backdrop" onclick="toggleSidebar('ngoPage')"></div>
+
+        <aside class="sidebar">
+
+            <div class="sidebar-brand">
+                <img src="logo.jpg" alt="ShareBite Logo" class="brand-logo-img">
+                <strong>Share<span class="brand-accent">Bite</span></strong>
+            </div>
+
+            <div class="user-role">
+                <span>NGO ACCOUNT</span>
+                <strong id="ngoName">Community NGO</strong>
+            </div>
+
+            <nav class="side-nav">
+
+                <button class="side-link active" onclick="ngoTab('overview', this)">
+                    🏠 Dashboard
+                </button>
+
+                <button class="side-link" onclick="ngoTab('available', this)">
+                    🍱 Available Food
+                </button>
+
+                <button class="side-link" onclick="ngoTab('accepted', this)">
+                    📦 My Accepted Food
+                </button>
+
+                <button class="side-link" onclick="ngoTab('impact', this)">
+                    🌱 Impact
+                </button>
+
+                <button class="side-link" onclick="ngoTab('notifications', this)">
+                    🔔 Notifications
+                </button>
+
+                <button class="side-link" onclick="ngoTab('settings', this)">
+                    ⚙️ Settings
+                </button>
+
+            </nav>
+
+            <button class="logout-side" onclick="logout()">
+                ↪ Logout
+            </button>
+
+        </aside>
+
+
+        <section class="dashboard-main">
+
+            <!-- NGO OVERVIEW -->
+
+            <div id="ngo-overview" class="dashboard-tab">
+
+                <div class="dashboard-heading">
+
+                    <div>
+
+                        <span class="eyebrow">NGO DASHBOARD</span>
+
+                        <h1>
+                            Welcome, <span id="ngoWelcome">NGO</span> 👋
+                        </h1>
+
+                        <p>
+                            Find surplus food available near your organization.
+                        </p>
+
+                    </div>
+
+                    <button class="btn btn-primary" onclick="ngoTab('available')">
+                        View Available Food
+                    </button>
+
+                </div>
+
+
+                <div class="stats-grid">
+
+                    <div class="stat-card">
+
+                        <span>Available Food</span>
+
+                        <strong id="ngoAvailableCount">0</strong>
+
+                        <small>Donations available</small>
+
+                    </div>
+
+
+                    <div class="stat-card">
+
+                        <span>Food Accepted</span>
+
+                        <strong id="ngoAcceptedFood">0 kg</strong>
+
+                        <small>Total food received</small>
+
+                    </div>
+
+
+                    <div class="stat-card">
+
+                        <span>Meals Supported</span>
+
+                        <strong id="ngoMeals">0</strong>
+
+                        <small>Estimated meals</small>
+
+                    </div>
+
+
+                    <div class="stat-card">
+
+                        <span>Completed</span>
+
+                        <strong id="ngoCompleted">0</strong>
+
+                        <small>Successful collections</small>
+
+                    </div>
+
+                </div>
+
+
+                <div class="content-section">
+
+                    <div class="section-head">
+
+                        <div>
+
+                            <h2>Available Food</h2>
+
+                            <p>
+                                Recently donated food near you.
+                            </p>
+
+                        </div>
+
+                        <button class="link-btn" onclick="ngoTab('available')">
+                            View all →
+                        </button>
+
+                    </div>
+
+                    <div id="ngoRecentFood" class="donation-grid"></div>
+
+                </div>
+
+            </div>
+
+
+            <!-- AVAILABLE -->
+
+            <div id="ngo-available" class="dashboard-tab hidden">
+
+                <div class="dashboard-heading">
+
+                    <div>
+
+                        <span class="eyebrow">FOOD DISCOVERY</span>
+
+                        <h1>Available Food</h1>
+
+                        <p>
+                            Find surplus food that your NGO can collect.
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <div class="toolbar">
+
+                    <input type="search" id="ngoSearch" placeholder="Search food by name, location, details..."
+                        oninput="renderNGOAvailable()">
+
+                    <select id="ngoFoodFilter" onchange="renderNGOAvailable()">
+
+                        <option value="">All Categories</option>
+                        <option>Cooked Food</option>
+                        <option>Packaged Food</option>
+                        <option>Fruits</option>
+                        <option>Vegetables</option>
+                        <option>Bakery Items</option>
+                        <option>Dairy Products</option>
+
+                    </select>
+
+                    <select id="ngoSortFilter" onchange="renderNGOAvailable()">
+
+                        <option value="priority">Sort: Urgent Priority</option>
+                        <option value="newest">Sort: Newest First</option>
+                        <option value="quantity">Sort: Quantity (High to Low)</option>
+
+                    </select>
+
+                    <button type="button" class="small-btn small-btn-secondary" onclick="refreshData()"
+                        title="Fetch latest food donations from database">
+                        🔄 Refresh
+                    </button>
+
+                </div>
+
+
+                <div id="ngoAvailableContainer" class="food-list"></div>
+
+            </div>
+
+
+            <!-- ACCEPTED -->
+
+            <div id="ngo-accepted" class="dashboard-tab hidden">
+
+                <div class="dashboard-heading">
+
+                    <div>
+
+                        <span class="eyebrow">COLLECTIONS</span>
+
+                        <h1>My Accepted Food</h1>
+
+                        <p>
+                            Track food donations accepted by your NGO.
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <div id="ngoAcceptedContainer" class="food-list"></div>
+
+            </div>
+
+
+            <!-- NGO IMPACT -->
+
+            <div id="ngo-impact" class="dashboard-tab hidden">
+
+                <div class="dashboard-heading">
+
+                    <div>
+
+                        <span class="eyebrow">SOCIAL IMPACT</span>
+
+                        <h1>NGO Impact 🌱</h1>
+
+                        <p>
+                            Track the difference your organization is making.
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <div class="impact-cards">
+
+                    <div class="big-impact-card">
+
+                        <span>🍚</span>
+
+                        <strong id="ngoImpactFood">0 kg</strong>
+
+                        <p>Food received</p>
+
+                    </div>
+
+
+                    <div class="big-impact-card">
+
+                        <span>🍽️</span>
+
+                        <strong id="ngoImpactMeals">0</strong>
+
+                        <p>Estimated meals supported</p>
+
+                    </div>
+
+
+                    <div class="big-impact-card">
+
+                        <span>🤝</span>
+
+                        <strong id="ngoImpactDonations">0</strong>
+
+                        <p>Donations accepted</p>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <!-- NGO NOTIFICATIONS -->
+
+            <div id="ngo-notifications" class="dashboard-tab hidden">
+
+                <div class="dashboard-heading">
+
+                    <div>
+
+                        <span class="eyebrow">UPDATES</span>
+
+                        <h1>Notifications</h1>
+
+                        <p>Stay updated about available food.</p>
+
+                    </div>
+
+                </div>
+
+                <div id="ngoNotificationContainer" class="notification-container"></div>
+
+            </div>
+
+
+            <!-- NGO SETTINGS -->
+
+            <div id="ngo-settings" class="dashboard-tab hidden">
+
+                <div class="dashboard-heading">
+
+                    <div>
+
+                        <span class="eyebrow">ACCOUNT</span>
+
+                        <h1>Settings</h1>
+
+                        <p>Manage your NGO account.</p>
+
+                    </div>
+
+                </div>
+
+
+                <div class="settings-card">
+
+                    <div class="setting-row">
+
+                        <div>
+
+                            <strong>Dark Mode</strong>
+
+                            <small>
+                                Use a darker appearance.
+                            </small>
+
+                        </div>
+
+                        <button id="darkToggleNGO" class="toggle" onclick="toggleDarkMode()">
+                            <i></i>
+                        </button>
+
+                    </div>
+
+
+                    <div class="setting-row">
+
+                        <div>
+
+                            <strong>Email Notifications</strong>
+
+                            <small>
+                                Receive updates about available food.
+                            </small>
+
+                        </div>
+
+                        <button class="toggle on" onclick="toggleSetting(this)">
+                            <i></i>
+                        </button>
+
+                    </div>
+
+
+                    <div class="setting-row">
+
+                        <div>
+
+                            <strong>Notification History</strong>
+
+                            <small>
+                                Clear all your received notifications.
+                            </small>
+
+                        </div>
+
+                        <button class="settings-action-btn" onclick="clearNotifications()">
+                            Clear Notifications
+                        </button>
+
+                    </div>
+
+
+                    <div class="setting-row">
+
+                        <div>
+                            <strong>Reset Data</strong>
+                            <small>Clear donations and reset application data.</small>
+                        </div>
+
+                        <button class="settings-action-btn danger" onclick="resetAllData()">
+                            Reset Data
+                        </button>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </section>
+
+    </main>
+
+
+    <!-- ================= AUTH MODAL ================= -->
+
+    <!-- ================= AUTH MODAL ================= -->
+
+    <div id="authModal" class="modal-overlay hidden" onclick="handleModalOverlayClick(event, 'authModal')">
+
+        <div class="modal-box" onclick="event.stopPropagation()">
+
+            <button class="modal-close" onclick="closeModal('authModal')" aria-label="Close dialog">
+                ×
+            </button>
+
+            <div class="modal-title">
+
+                <span class="eyebrow">WELCOME TO SHAREBITE</span>
+
+                <h2>Join the movement</h2>
+
+                <p>
+                    Choose how you want to use ShareBite.
+                </p>
+
+            </div>
+
+
+            <div class="role-options">
+
+                <button onclick="openRoleModal('donor')">
+
+                    <span>👤</span>
+
+                    <div>
+
+                        <strong>Food Donor</strong>
+
+                        <small>
+                            I want to donate surplus food.
+                        </small>
+
+                    </div>
+
+                    <b>→</b>
+
+                </button>
+
+
+                <button onclick="openRoleModal('ngo')">
+
+                    <span>🏢</span>
+
+                    <div>
+
+                        <strong>NGO / Organization</strong>
+
+                        <small>
+                            I want to receive surplus food.
+                        </small>
+
+                    </div>
+
+                    <b>→</b>
+
+                </button>
+
+            </div>
+
+
+        </div>
+
+    </div>
+
+
+    <!-- ================= LOGIN / SIGNUP MODAL ================= -->
+
+    <div id="roleModal" class="modal-overlay hidden" onclick="handleModalOverlayClick(event, 'roleModal')">
+
+        <div class="modal-box auth-form-box" onclick="event.stopPropagation()">
+
+            <button class="modal-close" onclick="closeModal('roleModal')" aria-label="Close dialog">
+                ×
+            </button>
+
+
+            <div class="modal-title">
+
+                <span id="authRoleLabel" class="eyebrow">
+                    FOOD DONOR
+                </span>
+
+                <h2 id="authTitle">
+                    Create your account
+                </h2>
+
+                <p id="authSubtitle">
+                    Join ShareBite and start making an impact.
+                </p>
+
+            </div>
+
+
+            <div class="auth-tabs">
+
+                <button id="signupTab" class="auth-tab active" onclick="switchAuth('signup')">
+                    Sign Up
+                </button>
+
+                <button id="loginTab" class="auth-tab" onclick="switchAuth('login')">
+                    Login
+                </button>
+
+            </div>
+
+
+            <form id="authForm">
+
+                <div id="nameField" class="form-group">
+
+                    <label id="nameLabel">
+                        Your Name
+                    </label>
+
+                    <input type="text" id="authName" placeholder="Enter your name">
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label>Email</label>
+
+                    <input type="email" id="authEmail" placeholder="Enter email" required>
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label>Password</label>
+
+                    <input type="password" id="authPassword" placeholder="Enter password" required>
+
+                </div>
+
+
+                <button class="btn btn-primary auth-submit" type="submit">
+
+                    Continue →
+
+                </button>
+
+            </form>
+
+        </div>
+
+    </div>
+
+
+    <!-- ================= FOOD DETAIL MODAL ================= -->
+
+    <div id="foodDetailModal" class="modal-overlay hidden" onclick="handleModalOverlayClick(event, 'foodDetailModal')">
+
+        <div class="modal-box food-detail-box" onclick="event.stopPropagation()">
+
+            <button class="modal-close" onclick="closeModal('foodDetailModal')" aria-label="Close details">
+                ×
+            </button>
+
+            <div id="foodDetailContent"></div>
+
+        </div>
+
+    </div>
+
+
+    <!-- ================= TOAST ================= -->
+
+    <div id="toastContainer" class="toast-container"></div>
+
+
+    <script src="script.js"></script>
+
+</body>
+
+</html>

@@ -1,0 +1,13 @@
+{
+  "name": "sharebite",
+  "version": "1.0.0",
+  "description": "Full-stack food donation and surplus sharing platform connecting donors and NGOs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": ["food-donation", "ngo", "zero-waste", "full-stack", "sqlite"],
+  "author": "ShareBite Team",
+  "license": "ISC"
+}
