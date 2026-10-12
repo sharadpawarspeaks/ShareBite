@@ -36,9 +36,27 @@
         </nav>
 
         <div class="nav-actions">
-            <button class="theme-btn" onclick="toggleDarkMode()" title="Dark Mode" aria-label="Toggle Dark Mode">
-                🌙
-            </button>
+            <!-- From Uiverse.io by Galahhad --> 
+            <label class="theme-switch" title="Toggle Dark Mode" aria-label="Toggle Dark Mode">
+              <input type="checkbox" class="theme-switch__checkbox" id="themeSwitchCheckbox" onchange="toggleDarkMode()">
+              <div class="theme-switch__container">
+                <div class="theme-switch__clouds"></div>
+                <div class="theme-switch__stars-container">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 144 55" fill="none">
+                    <path fill-rule="evenodd" clip-rule="evenodd" d="M135.831 3.00688C135.055 3.85027 134.111 4.29946 133 4.35447C134.111 4.40947 135.055 4.85867 135.831 5.71123C136.607 6.55462 136.996 7.56303 136.996 8.72727C136.996 7.95722 137.172 7.25134 137.525 6.59129C137.886 5.93124 138.372 5.39954 138.98 5.00535C139.598 4.60199 140.268 4.39114 141 4.35447C139.88 4.2903 138.936 3.85027 138.16 3.00688C137.384 2.16348 136.996 1.16425 136.996 0C136.996 1.16425 136.607 2.16348 135.831 3.00688ZM31 23.3545C32.1114 23.2995 33.0551 22.8503 33.8313 22.0069C34.6075 21.1635 34.9956 20.1642 34.9956 19C34.9956 20.1642 35.3837 21.1635 36.1599 22.0069C36.9361 22.8503 37.8798 23.2903 39 23.3545C38.2679 23.3911 37.5976 23.602 36.9802 24.0053C36.3716 24.3995 35.8864 24.9312 35.5248 25.5913C35.172 26.2513 34.9956 26.9572 34.9956 27.7273C34.9956 26.563 34.6075 25.5546 33.8313 24.7112C33.0551 23.8587 32.1114 23.4095 31 23.3545ZM0 36.3545C1.11136 36.2995 2.05513 35.8503 2.83131 35.0069C3.6075 34.1635 3.99559 33.1642 3.99559 32C3.99559 33.1642 4.38368 34.1635 5.15987 35.0069C5.93605 35.8503 6.87982 36.2903 8 36.3545C7.26792 36.3911 6.59757 36.602 5.98015 37.0053C5.37155 37.3995 4.88644 37.9312 4.52481 38.5913C4.172 39.2513 3.99559 39.9572 3.99559 40.7273C3.99559 39.563 3.6075 38.5546 2.83131 37.7112C2.05513 36.8587 1.11136 36.4095 0 36.3545ZM56.8313 24.0069C56.0551 24.8503 55.1114 25.2995 54 25.3545C55.1114 25.4095 56.0551 25.8587 56.8313 26.7112C57.6075 27.5546 57.9956 28.563 57.9956 29.7273C57.9956 28.9572 58.172 28.2513 58.5248 27.5913C58.8864 26.9312 59.3716 26.3995 59.9802 26.0053C60.5976 25.602 61.2679 25.3911 62 25.3545C60.8798 25.2903 59.9361 24.8503 59.1599 24.0069C58.3837 23.1635 57.9956 22.1642 57.9956 21C57.9956 22.1642 57.6075 23.1635 56.8313 24.0069ZM81 25.3545C82.1114 25.2995 83.0551 24.8503 83.8313 24.0069C84.6075 23.1635 84.9956 22.1642 84.9956 21C84.9956 22.1642 85.3837 23.1635 86.1599 24.0069C86.9361 24.8503 87.8798 25.2903 89 25.3545C88.2679 25.3911 87.5976 25.602 86.9802 26.0053C86.3716 26.3995 85.8864 26.9312 85.5248 27.5913C85.172 28.2513 84.9956 28.9572 84.9956 29.7273C84.9956 28.563 84.6075 27.5546 83.8313 26.7112C83.0551 25.8587 82.1114 25.4095 81 25.3545ZM136 36.3545C137.111 36.2995 138.055 35.8503 138.831 35.0069C139.607 34.1635 139.996 33.1642 139.996 32C139.996 33.1642 140.384 34.1635 141.16 35.0069C141.936 35.8503 142.88 36.2903 144 36.3545C143.268 36.3911 142.598 36.602 141.98 37.0053C141.372 37.3995 140.886 37.9312 140.525 38.5913C140.172 39.2513 139.996 39.9572 139.996 40.7273C139.996 39.563 139.607 38.5546 138.831 37.7112C138.055 36.8587 137.111 36.4095 136 36.3545ZM101.831 49.0069C101.055 49.8503 100.111 50.2995 99 50.3545C100.111 50.4095 101.055 50.8587 101.831 51.7112C102.607 52.5546 102.996 53.563 102.996 54.7273C102.996 53.9572 103.172 53.2513 103.525 52.5913C103.886 51.9312 104.372 51.3995 104.98 51.0053C105.598 50.602 106.268 50.3911 107 50.3545C105.88 50.2903 104.936 49.8503 104.16 49.0069C103.384 48.1635 102.996 47.1642 102.996 46C102.996 47.1642 102.607 48.1635 101.831 49.0069Z" fill="currentColor"></path>
+                  </svg>
+                </div>
+                <div class="theme-switch__circle-container">
+                  <div class="theme-switch__sun-moon-container">
+                    <div class="theme-switch__moon">
+                      <div class="theme-switch__spot"></div>
+                      <div class="theme-switch__spot"></div>
+                      <div class="theme-switch__spot"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </label>
 
             <div id="navAuthContainer">
                 <button class="login-nav-btn" onclick="openAuthModal()">
@@ -1448,83 +1466,100 @@
 
     <div id="roleModal" class="modal-overlay hidden" onclick="handleModalOverlayClick(event, 'roleModal')">
 
-        <div class="modal-box auth-form-box" onclick="event.stopPropagation()">
+        <!-- From Uiverse.io by JohnnyCSilva --> 
+        <form class="form" id="authForm" onclick="event.stopPropagation()">
 
-            <button class="modal-close" onclick="closeModal('roleModal')" aria-label="Close dialog">
+            <button type="button" class="modal-close" onclick="closeModal('roleModal')" aria-label="Close dialog">
                 ×
             </button>
 
-
-            <div class="modal-title">
-
-                <span id="authRoleLabel" class="eyebrow">
-                    FOOD DONOR
-                </span>
-
-                <h2 id="authTitle">
-                    Create your account
-                </h2>
-
-                <p id="authSubtitle">
-                    Join ShareBite and start making an impact.
-                </p>
-
+            <div class="auth-role-tabs">
+                <button type="button" id="roleTabDonor" class="role-tab active" onclick="setAuthRole('donor')">
+                    👤 Food Donor
+                </button>
+                <button type="button" id="roleTabNgo" class="role-tab" onclick="setAuthRole('ngo')">
+                    🏢 NGO / Organization
+                </button>
             </div>
 
-
-            <div class="auth-tabs">
-
-                <button id="signupTab" class="auth-tab active" onclick="switchAuth('signup')">
-                    Sign Up
-                </button>
-
-                <button id="loginTab" class="auth-tab" onclick="switchAuth('login')">
-                    Login
-                </button>
-
+            <div class="modal-title" style="margin-bottom: 10px; text-align: left;">
+                <span id="authRoleLabel" class="eyebrow">FOOD DONOR</span>
+                <h2 id="authTitle" style="font-size: 22px; margin: 4px 0 2px;">Welcome back</h2>
+                <p id="authSubtitle" style="font-size: 13px; margin: 0;">Login to continue to your dashboard.</p>
             </div>
 
-
-            <form id="authForm">
-
-                <div id="nameField" class="form-group">
-
-                    <label id="nameLabel">
-                        Your Name
-                    </label>
-
-                    <input type="text" id="authName" placeholder="Enter your name">
-
+            <div class="flex-column" id="nameField" style="display: none;">
+                <label id="nameLabel">Your Name</label>
+                <div class="inputForm">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="12" cy="7" r="4"></circle>
+                    </svg>
+                    <input placeholder="Enter your Name" class="input" type="text" id="authName">
                 </div>
+            </div>
 
-
-                <div class="form-group">
-
-                    <label>Email</label>
-
-                    <input type="email" id="authEmail" placeholder="Enter email" required>
-
+            <div class="flex-column">
+                <label>Email</label>
+                <div class="inputForm">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" viewBox="0 0 32 32" height="20"><g data-name="Layer 3" id="Layer_3"><path d="m30.853 13.87a15 15 0 0 0 -29.729 4.082 15.1 15.1 0 0 0 12.876 12.918 15.6 15.6 0 0 0 2.016.13 14.85 14.85 0 0 0 7.715-2.145 1 1 0 1 0 -1.031-1.711 13.007 13.007 0 1 1 5.458-6.529 2.149 2.149 0 0 1 -4.158-.759v-10.856a1 1 0 0 0 -2 0v1.726a8 8 0 1 0 .2 10.325 4.135 4.135 0 0 0 7.83.274 15.2 15.2 0 0 0 .823-7.455zm-14.853 8.13a6 6 0 1 1 6-6 6.006 6.006 0 0 1 -6 6z"></path></g></svg>
+                    <input placeholder="Enter your Email" class="input" type="email" id="authEmail" required>
                 </div>
-
-
-                <div class="form-group">
-
-                    <label>Password</label>
-
-                    <input type="password" id="authPassword" placeholder="Enter password" required>
-
+            </div>
+            
+            <div class="flex-column">
+                <label>Password</label>
+                <div class="inputForm">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" viewBox="-64 0 512 512" height="20"><path d="m336 512h-288c-26.453125 0-48-21.523438-48-48v-224c0-26.476562 21.546875-48 48-48h288c26.453125 0 48 21.523438 48 48v224c0 26.476562-21.546875 48-48 48zm-288-288c-8.8125 0-16 7.167969-16 16v224c0 8.832031 7.1875 16 16 16h288c8.8125 0 16-7.167969 16-16v-224c0-8.832031-7.1875-16-16-16zm0 0"></path><path d="m304 224c-8.832031 0-16-7.167969-16-16v-80c0-52.929688-43.070312-96-96-96s-96 43.070312-96 96v80c0 8.832031-7.167969 16-16 16s-16-7.167969-16-16v-80c0-70.59375 57.40625-128 128-128s128 57.40625 128 128v80c0 8.832031-7.167969 16-16 16zm0 0"></path></svg>        
+                    <input placeholder="Enter your Password" class="input" type="password" id="authPassword" required>
                 </div>
+            </div>
+            
+            <div class="flex-row" id="rememberRow">
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <input type="checkbox" id="rememberMe">
+                    <label for="rememberMe">Remember me</label>
+                </div>
+                <span class="span" onclick="forgotPassword()">Forgot password?</span>
+            </div>
 
+            <button class="button-submit" type="submit" id="authSubmitBtn">Sign In</button>
 
-                <button class="btn btn-primary auth-submit" type="submit">
+            <p class="p" id="authToggleText">
+                Don't have an account? <span class="span" onclick="switchAuth('signup')">Sign Up</span>
+            </p>
 
-                    Continue →
+            <p class="p line">Or With</p>
 
+            <div class="flex-row">
+                <button type="button" class="btn google" onclick="socialLogin('Google')">
+                    <svg xml:space="preserve" style="enable-background:new 0 0 512 512;" viewBox="0 0 512 512" y="0px" x="0px" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns="http://www.w3.org/2000/svg" id="Layer_1" width="20" version="1.1">
+                        <path d="M113.47,309.408L95.648,375.94l-65.139,1.378C11.042,341.211,0,299.9,0,256 c0-42.451,10.324-82.483,28.624-117.732h0.014l57.992,10.632l25.404,57.644c-5.317,15.501-8.215,32.141-8.215,49.456 C103.821,274.792,107.225,292.797,113.47,309.408z" style="fill:#FBBB00;"></path>
+                        <path d="M507.527,208.176C510.467,223.662,512,239.655,512,256c0,18.328-1.927,36.206-5.598,53.451 c-12.462,58.683-45.025,109.925-90.134,146.187l-0.014-0.014l-73.044-3.727l-10.338-64.535 c29.932-17.554,53.324-45.025,65.646-77.911h-136.89V208.176h138.887L507.527,208.176L507.527,208.176z" style="fill:#518EF8;"></path>
+                        <path d="M416.253,455.624l0.014,0.014C372.396,490.901,316.666,512,256,512 c-97.491,0-182.252-54.491-225.491-134.681l82.961-67.91c21.619,57.698,77.278,98.771,142.53,98.771 c28.047,0,54.323-7.582,76.87-20.818L416.253,455.624z" style="fill:#28B446;"></path>
+                        <path d="M419.404,58.936l-82.933,67.896c-23.335-14.586-50.919-23.012-80.471-23.012 c-66.729,0-123.429,42.957-143.965,102.724l-83.397-68.276h-0.014C71.23,56.123,157.06,0,256,0 C318.115,0,375.068,22.126,419.404,58.936z" style="fill:#F14336;"></path>
+                    </svg>
+                    Google 
                 </button>
+                <button type="button" class="btn apple" onclick="socialLogin('Apple')">
+                    <svg xml:space="preserve" style="enable-background:new 0 0 22.773 22.773;" viewBox="0 0 22.773 22.773" y="0px" x="0px" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns="http://www.w3.org/2000/svg" id="Capa_1" width="20" height="20" version="1.1">
+                        <g><g>
+                            <path d="M15.769,0c0.053,0,0.106,0,0.162,0c0.13,1.606-0.483,2.806-1.228,3.675c-0.731,0.863-1.732,1.7-3.351,1.573 c-0.108-1.583,0.506-2.694,1.25-3.561C13.292,0.879,14.557,0.16,15.769,0z"></path>
+                            <path d="M20.67,16.716c0,0.016,0,0.03,0,0.045c-0.455,1.378-1.104,2.559-1.896,3.655c-0.723,0.995-1.609,2.334-3.191,2.334 c-1.367,0-2.275-0.879-3.676-0.903c-1.482-0.024-2.297,0.735-3.652,0.926c-0.155,0-0.31,0-0.462,0 c-0.995-0.144-1.798-0.932-2.383-1.642c-1.725-2.098-3.058-4.808-3.306-8.276c0-0.34,0-0.679,0-1.019 c0.105-2.482,1.311-4.5,2.914-5.478c0.846-0.52,2.009-0.963,3.304-0.765c0.555,0.086,1.122,0.276,1.619,0.464 c0.471,0.181,1.06,0.502,1.618,0.485c0.378-0.011,0.754-0.208,1.135-0.347c1.116-0.403,2.21-0.865,3.652-0.648 c1.733,0.262,2.963,1.032,3.723,2.22c-1.466,0.933-2.625,2.339-2.427,4.74C17.818,14.688,19.086,15.964,20.67,16.716z"></path>
+                        </g></g>
+                    </svg>
+                    Apple 
+                </button>
+            </div>
 
-            </form>
+            <!-- Demo 1-Click Fast Login -->
+            <div style="margin-top: 8px; text-align: center;">
+                <button type="button" class="demo-login-chip" onclick="demoLogin(currentRole)">
+                    ⚡ Quick Demo Test Login
+                </button>
+            </div>
 
-        </div>
+        </form>
 
     </div>
 

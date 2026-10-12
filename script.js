@@ -416,13 +416,18 @@ function updateHomeStatsLocal() {
 /* ================= MODALS & POPUPS ================= */
 
 function openAuthModal() {
-    document.getElementById("authModal").classList.remove("hidden");
+    openRoleModal(currentRole || "donor");
 }
 
 function openRoleModal(role) {
-    currentRole = role;
+    currentRole = role || "donor";
     document.getElementById("authModal").classList.add("hidden");
     document.getElementById("roleModal").classList.remove("hidden");
+    setRoleUI();
+}
+
+function setAuthRole(role) {
+    currentRole = role;
     setRoleUI();
 }
 
@@ -446,13 +451,19 @@ function handleModalOverlayClick(event, modalId) {
 function setRoleUI() {
     const label = document.getElementById("authRoleLabel");
     const nameLabel = document.getElementById("nameLabel");
+    const donorTab = document.getElementById("roleTabDonor");
+    const ngoTab = document.getElementById("roleTabNgo");
 
     if (currentRole === "ngo") {
-        label.textContent = "NGO / ORGANIZATION";
-        nameLabel.textContent = "Organization / NGO Name";
+        if (label) label.textContent = "NGO / ORGANIZATION";
+        if (nameLabel) nameLabel.textContent = "Organization / NGO Name";
+        if (donorTab) donorTab.classList.remove("active");
+        if (ngoTab) ngoTab.classList.add("active");
     } else {
-        label.textContent = "FOOD DONOR";
-        nameLabel.textContent = "Your Name / Organization";
+        if (label) label.textContent = "FOOD DONOR";
+        if (nameLabel) nameLabel.textContent = "Your Name / Organization";
+        if (donorTab) donorTab.classList.add("active");
+        if (ngoTab) ngoTab.classList.remove("active");
     }
 
     switchAuth(authMode);
@@ -464,21 +475,40 @@ function switchAuth(mode) {
     const title = document.getElementById("authTitle");
     const subtitle = document.getElementById("authSubtitle");
     const nameField = document.getElementById("nameField");
-    const signupTab = document.getElementById("signupTab");
-    const loginTab = document.getElementById("loginTab");
+    const submitBtn = document.getElementById("authSubmitBtn");
+    const toggleText = document.getElementById("authToggleText");
+    const rememberRow = document.getElementById("rememberRow");
 
     if (mode === "signup") {
-        title.textContent = "Create your account";
-        subtitle.textContent = "Join ShareBite and start making an impact.";
-        nameField.classList.remove("hidden");
-        signupTab.classList.add("active");
-        loginTab.classList.remove("active");
+        if (title) title.textContent = currentRole === "ngo" ? "Register Organization" : "Create your account";
+        if (subtitle) subtitle.textContent = "Join ShareBite and start making an impact.";
+        if (nameField) nameField.style.display = "flex";
+        if (submitBtn) submitBtn.textContent = "Sign Up";
+        if (toggleText) toggleText.innerHTML = `Already have an account? <span class="span" onclick="switchAuth('login')">Sign In</span>`;
+        if (rememberRow) rememberRow.style.display = "none";
     } else {
-        title.textContent = "Welcome back";
-        subtitle.textContent = "Login to continue to your dashboard.";
-        nameField.classList.add("hidden");
-        signupTab.classList.remove("active");
-        loginTab.classList.add("active");
+        if (title) title.textContent = "Welcome back";
+        if (subtitle) subtitle.textContent = `Login to continue as ${currentRole === "ngo" ? "NGO / Organization" : "Food Donor"}.`;
+        if (nameField) nameField.style.display = "none";
+        if (submitBtn) submitBtn.textContent = "Sign In";
+        if (toggleText) toggleText.innerHTML = `Don't have an account? <span class="span" onclick="switchAuth('signup')">Sign Up</span>`;
+        if (rememberRow) rememberRow.style.display = "flex";
+    }
+}
+
+function socialLogin(provider) {
+    showToast(`Connecting with ${provider}... ⚡`);
+    setTimeout(() => {
+        demoLogin(currentRole);
+    }, 500);
+}
+
+function forgotPassword() {
+    const email = document.getElementById("authEmail").value.trim();
+    if (email) {
+        showToast(`Password reset link sent to ${email} 📧`);
+    } else {
+        showToast("Please enter your email above, then click 'Forgot password?'");
     }
 }
 
@@ -2024,6 +2054,10 @@ function loadDarkMode() {
 }
 
 function updateThemeButtons(enabled) {
+    document.querySelectorAll(".theme-switch__checkbox").forEach(cb => {
+        cb.checked = enabled;
+    });
+
     document.querySelectorAll(".theme-btn").forEach(button => {
         button.textContent = enabled ? "☀️" : "🌙";
     });
