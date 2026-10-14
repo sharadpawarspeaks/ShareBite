@@ -2054,7 +2054,7 @@ function loadDarkMode() {
 }
 
 function updateThemeButtons(enabled) {
-    document.querySelectorAll(".theme-switch__checkbox").forEach(cb => {
+    document.querySelectorAll("#themeSwitchCheckbox, .theme-switch__checkbox, .switch input").forEach(cb => {
         cb.checked = enabled;
     });
 
