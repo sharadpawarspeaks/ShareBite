@@ -1083,13 +1083,13 @@ async function triggerAIVisionAnalysis() {
         resultsEl.innerHTML = `
             <div style="display:flex;align-items:center;gap:10px;padding:8px 0;color:var(--muted);">
                 <span style="font-size:20px;">🔄</span>
-                <span>Inspecting food image with ChatGPT Vision model...</span>
+                <span>Inspecting food image with Groq Llama 3.2 Vision model...</span>
             </div>
         `;
     }
 
     try {
-        showToast("Inspecting photo with Real AI Vision... 🤖");
+        showToast("Inspecting photo with Groq Vision AI... ⚡");
         const analysis = await API.post("/ai/analyze-image", { image: uploadedImageBase64 });
         latestAISuggestions = analysis;
 
@@ -1189,7 +1189,7 @@ async function triggerAIVisionAnalysis() {
         if (alertEl) alertEl.classList.add("hidden");
 
         if (modelBadge) {
-            modelBadge.textContent = analysis.aiProvider || "ChatGPT Multimodal Vision AI";
+            modelBadge.textContent = analysis.aiProvider || "Groq Multimodal Vision AI";
         }
 
         if (freshnessBadge) {
@@ -1219,10 +1219,10 @@ async function triggerAIVisionAnalysis() {
         const errMsg = err.message || "";
 
         if (errMsg.includes("API_KEY") || errMsg.includes("Key Required") || errMsg.includes("API key")) {
-            showToast("⚠️ OpenAI API key is not configured in .env file.");
+            showToast("⚠️ Groq API key is not configured in .env file.");
             if (overlay) {
                 overlay.className = "image-verification-overlay rejected";
-                overlay.innerHTML = "⚠️ API Key Needed in .env";
+                overlay.innerHTML = "⚠️ Groq Key Needed in .env";
             }
             if (reqBadge) {
                 reqBadge.className = "status expired";

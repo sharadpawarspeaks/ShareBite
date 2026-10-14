@@ -115,15 +115,9 @@ function reloadEnvConfig() {
     }
 }
 
-function getOpenAIApiKey() {
+function getGroqApiKey() {
     reloadEnvConfig();
-    const key = process.env.OPENAI_API_KEY || process.env.CHATGPT_API_KEY || db.getSetting('openai_api_key');
-    return (key && key.trim()) ? key.trim() : null;
-}
-
-function getGeminiApiKey() {
-    reloadEnvConfig();
-    const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || db.getSetting('gemini_api_key');
+    const key = process.env.GROQ_API_KEY || db.getSetting('groq_api_key');
     return (key && key.trim()) ? key.trim() : null;
 }
 
@@ -182,12 +176,11 @@ Return STRICTLY a valid JSON object matching this schema without any markdown fo
   "confidence": 0.95
 }`;
 
-async function analyzeFoodImageWithOpenAI(imageBase64, apiKey) {
-    const candidateModels = ['gpt-4o-mini', 'gpt-4o'];
+async function analyzeFoodImageWithGroq(imageBase64, apiKey) {
+    const candidateModels = ['llama-3.2-11b-vision-preview', 'llama-3.2-90b-vision-preview'];
     let lastError = null;
     const trimmedKey = apiKey.trim();
 
-    // Ensure proper data URI prefix for base64 image
     let formattedImageUrl = imageBase64;
     if (!formattedImageUrl.startsWith('data:image/')) {
         formattedImageUrl = `data:image/jpeg;base64,${formattedImageUrl}`;
@@ -195,7 +188,7 @@ async function analyzeFoodImageWithOpenAI(imageBase64, apiKey) {
 
     for (const model of candidateModels) {
         try {
-            const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -206,44 +199,46 @@ async function analyzeFoodImageWithOpenAI(imageBase64, apiKey) {
                     response_format: { type: "json_object" },
                     messages: [
                         {
-                            role: "system",
-                            content: FOOD_INSPECTION_PROMPT
-                        },
-                        {
                             role: "user",
                             content: [
                                 {
                                     type: "text",
-                                    text: "Inspect this uploaded food donation image and respond strictly in valid JSON matching the specified schema."
+                                    text: `${FOOD_INSPECTION_PROMPT}\n\nIMPORTANT: Inspect this uploaded food image and respond strictly in valid JSON matching the schema.`
                                 },
                                 {
                                     type: "image_url",
                                     image_url: {
-                                        url: formattedImageUrl,
-                                        detail: "auto"
+                                        url: formattedImageUrl
                                     }
                                 }
                             ]
                         }
                     ],
-                    max_tokens: 800,
-                    temperature: 0.1
+                    temperature: 0.1,
+                    max_tokens: 800
                 })
             });
 
             if (!response.ok) {
                 const errorText = await response.text();
-                lastError = new Error(`OpenAI API error (${response.status}): ${errorText}`);
+                lastError = new Error(`Groq API error (${response.status}): ${errorText}`);
                 continue;
             }
 
             const data = await response.json();
             const rawContent = data.choices?.[0]?.message?.content;
             if (!rawContent) {
-                throw new Error('No content received from OpenAI model response');
+                throw new Error('No content returned by Groq Vision model');
             }
 
-            const parsed = JSON.parse(rawContent);
+            let cleaned = rawContent.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
+            const firstBrace = cleaned.indexOf('{');
+            const lastBrace = cleaned.lastIndexOf('}');
+            if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+                cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+            }
+
+            const parsed = JSON.parse(cleaned);
             return {
                 isFood: Boolean(parsed.isFood),
                 rejectionReason: parsed.rejectionReason || null,
@@ -264,86 +259,7 @@ async function analyzeFoodImageWithOpenAI(imageBase64, apiKey) {
         }
     }
 
-    throw lastError || new Error('Failed to analyze food image with OpenAI ChatGPT Vision');
-}
-
-async function analyzeFoodImageWithGemini(imageBase64, apiKey) {
-    const cleanBase64 = imageBase64.replace(/^data:image\/[a-zA-Z+]+;base64,/, '');
-    const mimeMatch = imageBase64.match(/^data:(image\/[a-zA-Z+]+);base64,/);
-    const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
-
-    const candidateModels = ['gemini-flash-lite-latest', 'gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.5-flash'];
-    let lastError = null;
-
-    const payload = {
-        contents: [
-            {
-                parts: [
-                    { text: FOOD_INSPECTION_PROMPT },
-                    {
-                        inline_data: {
-                            mime_type: mimeType,
-                            data: cleanBase64
-                        }
-                    }
-                ]
-            }
-        ],
-        generationConfig: {
-            response_mime_type: "application/json",
-            temperature: 0.1
-        }
-    };
-
-    const trimmedKey = apiKey.trim();
-
-    for (const model of candidateModels) {
-        try {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(trimmedKey)}`;
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                // If model not found (404), fall through to next candidate model
-                if (response.status === 404 && candidateModels.indexOf(model) < candidateModels.length - 1) {
-                    lastError = new Error(`Model ${model} not available: ${errorText}`);
-                    continue;
-                }
-                throw new Error(`Google Gemini API error (${response.status}): ${errorText}`);
-            }
-
-            const data = await response.json();
-            const candidateText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (!candidateText) {
-                throw new Error('No response text received from Gemini Vision model');
-            }
-
-            // Extract JSON cleanly
-            let cleaned = candidateText.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
-            const firstBrace = cleaned.indexOf('{');
-            const lastBrace = cleaned.lastIndexOf('}');
-            if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-                cleaned = cleaned.substring(firstBrace, lastBrace + 1);
-            }
-
-            const result = JSON.parse(cleaned);
-            result.isFood = Boolean(result.isFood);
-            result.isSafeForDonation = result.isFood && (result.isSafeForDonation !== false);
-            result.activeModel = model;
-            return result;
-        } catch (err) {
-            lastError = err;
-            if (model === candidateModels[candidateModels.length - 1]) {
-                throw lastError;
-            }
-        }
-    }
-
-    throw lastError || new Error('Failed to analyze image with Google Gemini Vision');
+    throw lastError || new Error('Failed to analyze food image with Groq Vision AI');
 }
 
 // -------------------------------------------------------------
@@ -614,71 +530,49 @@ const server = http.createServer(async (req, res) => {
 
             // GET /api/ai/status
             if (pathname === '/api/ai/status' && method === 'GET') {
-                const openAiKey = getOpenAIApiKey();
-                const geminiKey = getGeminiApiKey();
-
-                if (openAiKey) {
+                const groqKey = getGroqApiKey();
+                if (groqKey) {
                     return sendJson(res, 200, {
                         hasKey: true,
-                        type: 'openai',
-                        model: 'gpt-4o-mini',
-                        provider: 'ChatGPT Vision AI (Active 🟢)',
-                        keyPreview: `${openAiKey.slice(0, 7)}...${openAiKey.slice(-4)}`
-                    });
-                }
-
-                if (geminiKey) {
-                    return sendJson(res, 200, {
-                        hasKey: true,
-                        type: 'gemini',
-                        model: 'gemini-3.8-flash',
-                        provider: 'Google Gemini Vision AI (Active 🟢)',
-                        keyPreview: `${geminiKey.slice(0, 6)}...${geminiKey.slice(-4)}`
+                        type: 'groq',
+                        model: 'llama-3.2-11b-vision-preview',
+                        provider: 'Groq Llama 3.2 Vision AI (Active 🟢)',
+                        keyPreview: `${groqKey.slice(0, 7)}...${groqKey.slice(-4)}`
                     });
                 }
 
                 return sendJson(res, 200, {
                     hasKey: false,
                     type: 'none',
-                    model: 'gpt-4o-mini',
-                    provider: 'ChatGPT Vision AI (Key Required 🔑)',
+                    model: 'llama-3.2-11b-vision-preview',
+                    provider: 'Groq Vision AI (Key Required 🔑)',
                     keyPreview: null
                 });
             }
 
-            // POST /api/ai/config (Save or update AI API key)
+            // POST /api/ai/config (Save or update Groq API key)
             if (pathname === '/api/ai/config' && method === 'POST') {
                 const body = await readJsonBody(req);
                 const { apiKey } = body;
                 if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length < 8) {
-                    return sendError(res, 400, 'Please provide a valid API key (e.g. OpenAI sk-... or Gemini key).');
+                    return sendError(res, 400, 'Please provide a valid Groq API key (starts with gsk_...).');
                 }
                 const cleanedKey = apiKey.trim();
-                if (cleanedKey.startsWith('sk-')) {
-                    db.setSetting('openai_api_key', cleanedKey);
-                    return sendJson(res, 200, {
-                        success: true,
-                        message: 'ChatGPT (OpenAI) Vision AI key saved & activated! 🚀',
-                        keyPreview: `${cleanedKey.slice(0, 7)}...${cleanedKey.slice(-4)}`
-                    });
-                } else {
-                    db.setSetting('gemini_api_key', cleanedKey);
-                    return sendJson(res, 200, {
-                        success: true,
-                        message: 'Gemini Vision AI key saved & activated! 🚀',
-                        keyPreview: `${cleanedKey.slice(0, 6)}...${cleanedKey.slice(-4)}`
-                    });
-                }
+                db.setSetting('groq_api_key', cleanedKey);
+                return sendJson(res, 200, {
+                    success: true,
+                    message: 'Groq Vision AI key saved & activated! 🚀',
+                    keyPreview: `${cleanedKey.slice(0, 7)}...${cleanedKey.slice(-4)}`
+                });
             }
 
             // DELETE /api/ai/config (Remove saved API key)
             if (pathname === '/api/ai/config' && method === 'DELETE') {
-                db.setSetting('openai_api_key', '');
-                db.setSetting('gemini_api_key', '');
-                return sendJson(res, 200, { success: true, message: 'AI API keys cleared.' });
+                db.setSetting('groq_api_key', '');
+                return sendJson(res, 200, { success: true, message: 'Groq API key cleared.' });
             }
 
-            // POST /api/ai/analyze-image (Real AI Food Vision Inspection)
+            // POST /api/ai/analyze-image (Real AI Food Vision Inspection via Groq)
             if (pathname === '/api/ai/analyze-image' && method === 'POST') {
                 const body = await readJsonBody(req);
                 const { image, apiKey: directKey } = body;
@@ -687,58 +581,22 @@ const server = http.createServer(async (req, res) => {
                     return sendError(res, 400, 'Valid image data is required for AI inspection.');
                 }
 
-                let openAiKey = getOpenAIApiKey();
-                let geminiKey = getGeminiApiKey();
+                const apiKey = (directKey && typeof directKey === 'string' && directKey.trim()) || getGroqApiKey();
 
-                if (directKey && typeof directKey === 'string' && directKey.trim()) {
-                    const trimmed = directKey.trim();
-                    if (trimmed.startsWith('sk-')) {
-                        openAiKey = trimmed;
-                    } else {
-                        geminiKey = trimmed;
-                    }
+                if (!apiKey) {
+                    return sendError(res, 400, 'API_KEY_REQUIRED: Real AI Vision requires a Groq API key. Please add your GROQ_API_KEY in the .env file.');
                 }
 
-                if (openAiKey) {
-                    try {
-                        const analysis = await analyzeFoodImageWithOpenAI(image, openAiKey);
-                        return sendJson(res, 200, {
-                            ...analysis,
-                            aiProvider: `ChatGPT Vision AI (${analysis.activeModel || 'gpt-4o-mini'})`
-                        });
-                    } catch (openAiErr) {
-                        console.error('ChatGPT Vision inspection failed:', openAiErr.message);
-                        // If OpenAI returns insufficient_quota or other error, fallback to active Gemini if available
-                        if (geminiKey) {
-                            try {
-                                console.log('Falling back to Google Gemini Vision AI...');
-                                const analysis = await analyzeFoodImageWithGemini(image, geminiKey);
-                                return sendJson(res, 200, {
-                                    ...analysis,
-                                    aiProvider: `Google Gemini Vision (Fallback: OpenAI credit exhausted)`
-                                });
-                            } catch (geminiFallbackErr) {
-                                console.error('Gemini fallback failed:', geminiFallbackErr.message);
-                            }
-                        }
-                        return sendError(res, 502, 'ChatGPT Vision AI Error: ' + openAiErr.message);
-                    }
+                try {
+                    const analysis = await analyzeFoodImageWithGroq(image, apiKey);
+                    return sendJson(res, 200, {
+                        ...analysis,
+                        aiProvider: `Groq Vision AI (${analysis.activeModel || 'llama-3.2-11b-vision-preview'})`
+                    });
+                } catch (groqErr) {
+                    console.error('Groq Vision inspection failed:', groqErr.message);
+                    return sendError(res, 502, 'Groq Vision AI Error: ' + groqErr.message);
                 }
-
-                if (geminiKey) {
-                    try {
-                        const analysis = await analyzeFoodImageWithGemini(image, geminiKey);
-                        return sendJson(res, 200, {
-                            ...analysis,
-                            aiProvider: `Google Gemini Vision AI (${analysis.activeModel || 'gemini-flash-lite-latest'})`
-                        });
-                    } catch (geminiErr) {
-                        console.error('Gemini Vision inspection failed:', geminiErr.message);
-                        return sendError(res, 502, 'Gemini Vision AI Error: ' + geminiErr.message);
-                    }
-                }
-
-                return sendError(res, 400, 'API_KEY_REQUIRED: Real AI Vision requires an OpenAI API key. Please add your OPENAI_API_KEY in the .env file.');
             }
 
             // POST /api/reset-demo or /api/reset-data
