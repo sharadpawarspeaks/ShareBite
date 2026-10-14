@@ -1083,7 +1083,7 @@ async function triggerAIVisionAnalysis() {
         resultsEl.innerHTML = `
             <div style="display:flex;align-items:center;gap:10px;padding:8px 0;color:var(--muted);">
                 <span style="font-size:20px;">🔄</span>
-                <span>Inspecting food image with Google Gemini Vision model...</span>
+                <span>Inspecting food image with ChatGPT Vision model...</span>
             </div>
         `;
     }
@@ -1189,7 +1189,7 @@ async function triggerAIVisionAnalysis() {
         if (alertEl) alertEl.classList.add("hidden");
 
         if (modelBadge) {
-            modelBadge.textContent = analysis.aiProvider || "Google Gemini Multimodal Vision AI";
+            modelBadge.textContent = analysis.aiProvider || "ChatGPT Multimodal Vision AI";
         }
 
         if (freshnessBadge) {
@@ -1219,7 +1219,7 @@ async function triggerAIVisionAnalysis() {
         const errMsg = err.message || "";
 
         if (errMsg.includes("API_KEY") || errMsg.includes("Key Required") || errMsg.includes("API key")) {
-            showToast("⚠️ Gemini API key is not configured in .env file.");
+            showToast("⚠️ OpenAI API key is not configured in .env file.");
             if (overlay) {
                 overlay.className = "image-verification-overlay rejected";
                 overlay.innerHTML = "⚠️ API Key Needed in .env";

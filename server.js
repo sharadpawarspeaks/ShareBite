@@ -93,20 +93,41 @@ function getAuthUser(req) {
     return null;
 }
 
-function getGeminiApiKey() {
-    return process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || db.getSetting('gemini_api_key') || null;
+function reloadEnvConfig() {
+    try {
+        const envPath = path.join(__dirname, '.env');
+        if (fs.existsSync(envPath)) {
+            const envContent = fs.readFileSync(envPath, 'utf8');
+            for (const line of envContent.split(/\r?\n/)) {
+                const trimmed = line.trim();
+                if (trimmed && !trimmed.startsWith('#') && trimmed.includes('=')) {
+                    const [k, ...v] = trimmed.split('=');
+                    const key = k.trim();
+                    const val = v.join('=').trim().replace(/^["']|["']$/g, '');
+                    if (key) {
+                        process.env[key] = val;
+                    }
+                }
+            }
+        }
+    } catch {
+        // Ignore read errors
+    }
 }
 
-async function analyzeFoodImageWithGemini(imageBase64, apiKey) {
-    const cleanBase64 = imageBase64.replace(/^data:image\/[a-zA-Z+]+;base64,/, '');
-    const mimeMatch = imageBase64.match(/^data:(image\/[a-zA-Z+]+);base64,/);
-    const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+function getOpenAIApiKey() {
+    reloadEnvConfig();
+    const key = process.env.OPENAI_API_KEY || process.env.CHATGPT_API_KEY || db.getSetting('openai_api_key');
+    return (key && key.trim()) ? key.trim() : null;
+}
 
-    const candidateModels = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-2.5-flash'];
-    let lastError = null;
+function getGeminiApiKey() {
+    reloadEnvConfig();
+    const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || db.getSetting('gemini_api_key');
+    return (key && key.trim()) ? key.trim() : null;
+}
 
-    const promptText = `
-You are an expert food safety inspector and donation coordinator for a food rescue and surplus sharing platform.
+const FOOD_INSPECTION_PROMPT = `You are an expert food safety inspector and donation coordinator for a food rescue and surplus sharing platform.
 Inspect this uploaded image with STRICT SCRUTINY.
 
 STEP 1: MANDATORY FOOD VERIFICATION
@@ -159,14 +180,106 @@ Return STRICTLY a valid JSON object matching this schema without any markdown fo
   "suggestedExpiryDays": 2,
   "description": "...",
   "confidence": 0.95
+}`;
+
+async function analyzeFoodImageWithOpenAI(imageBase64, apiKey) {
+    const candidateModels = ['gpt-4o-mini', 'gpt-4o'];
+    let lastError = null;
+    const trimmedKey = apiKey.trim();
+
+    // Ensure proper data URI prefix for base64 image
+    let formattedImageUrl = imageBase64;
+    if (!formattedImageUrl.startsWith('data:image/')) {
+        formattedImageUrl = `data:image/jpeg;base64,${formattedImageUrl}`;
+    }
+
+    for (const model of candidateModels) {
+        try {
+            const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${trimmedKey}`
+                },
+                body: JSON.stringify({
+                    model: model,
+                    response_format: { type: "json_object" },
+                    messages: [
+                        {
+                            role: "system",
+                            content: FOOD_INSPECTION_PROMPT
+                        },
+                        {
+                            role: "user",
+                            content: [
+                                {
+                                    type: "text",
+                                    text: "Inspect this uploaded food donation image and respond strictly in valid JSON matching the specified schema."
+                                },
+                                {
+                                    type: "image_url",
+                                    image_url: {
+                                        url: formattedImageUrl,
+                                        detail: "auto"
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    max_tokens: 800,
+                    temperature: 0.1
+                })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                lastError = new Error(`OpenAI API error (${response.status}): ${errorText}`);
+                continue;
+            }
+
+            const data = await response.json();
+            const rawContent = data.choices?.[0]?.message?.content;
+            if (!rawContent) {
+                throw new Error('No content received from OpenAI model response');
+            }
+
+            const parsed = JSON.parse(rawContent);
+            return {
+                isFood: Boolean(parsed.isFood),
+                rejectionReason: parsed.rejectionReason || null,
+                safetyWarning: parsed.safetyWarning || null,
+                foodName: parsed.foodName || (parsed.isFood ? 'Donated Food Item' : 'Non-Food Item'),
+                foodType: parsed.foodType || 'Cooked Food',
+                estimatedQuantityKg: Number(parsed.estimatedQuantityKg) || 1.0,
+                visualFreshness: parsed.visualFreshness || 'Fresh',
+                isSafeForDonation: Boolean(parsed.isSafeForDonation),
+                priority: parsed.priority || 'Medium',
+                suggestedExpiryDays: Number(parsed.suggestedExpiryDays) || 2,
+                description: parsed.description || '',
+                confidence: Number(parsed.confidence) || 0.95,
+                activeModel: model
+            };
+        } catch (err) {
+            lastError = err;
+        }
+    }
+
+    throw lastError || new Error('Failed to analyze food image with OpenAI ChatGPT Vision');
 }
-`;
+
+async function analyzeFoodImageWithGemini(imageBase64, apiKey) {
+    const cleanBase64 = imageBase64.replace(/^data:image\/[a-zA-Z+]+;base64,/, '');
+    const mimeMatch = imageBase64.match(/^data:(image\/[a-zA-Z+]+);base64,/);
+    const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+
+    const candidateModels = ['gemini-flash-lite-latest', 'gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.5-flash'];
+    let lastError = null;
 
     const payload = {
         contents: [
             {
                 parts: [
-                    { text: promptText },
+                    { text: FOOD_INSPECTION_PROMPT },
                     {
                         inline_data: {
                             mime_type: mimeType,
@@ -501,35 +614,68 @@ const server = http.createServer(async (req, res) => {
 
             // GET /api/ai/status
             if (pathname === '/api/ai/status' && method === 'GET') {
-                const key = getGeminiApiKey();
+                const openAiKey = getOpenAIApiKey();
+                const geminiKey = getGeminiApiKey();
+
+                if (openAiKey) {
+                    return sendJson(res, 200, {
+                        hasKey: true,
+                        type: 'openai',
+                        model: 'gpt-4o-mini',
+                        provider: 'ChatGPT Vision AI (Active 🟢)',
+                        keyPreview: `${openAiKey.slice(0, 7)}...${openAiKey.slice(-4)}`
+                    });
+                }
+
+                if (geminiKey) {
+                    return sendJson(res, 200, {
+                        hasKey: true,
+                        type: 'gemini',
+                        model: 'gemini-3.8-flash',
+                        provider: 'Google Gemini Vision AI (Active 🟢)',
+                        keyPreview: `${geminiKey.slice(0, 6)}...${geminiKey.slice(-4)}`
+                    });
+                }
+
                 return sendJson(res, 200, {
-                    hasKey: Boolean(key),
-                    model: 'gemini-1.5-flash / gemini-2.0-flash',
-                    provider: key ? 'Google Gemini Vision AI (Active 🟢)' : 'Google Gemini Vision AI (Key Required 🔑)',
-                    keyPreview: key ? `${key.slice(0, 6)}...${key.slice(-4)}` : null
+                    hasKey: false,
+                    type: 'none',
+                    model: 'gpt-4o-mini',
+                    provider: 'ChatGPT Vision AI (Key Required 🔑)',
+                    keyPreview: null
                 });
             }
 
-            // POST /api/ai/config (Save or update Gemini API key)
+            // POST /api/ai/config (Save or update AI API key)
             if (pathname === '/api/ai/config' && method === 'POST') {
                 const body = await readJsonBody(req);
                 const { apiKey } = body;
                 if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length < 8) {
-                    return sendError(res, 400, 'Please provide a valid Gemini API key (typically starts with AIzaSy...).');
+                    return sendError(res, 400, 'Please provide a valid API key (e.g. OpenAI sk-... or Gemini key).');
                 }
                 const cleanedKey = apiKey.trim();
-                db.setSetting('gemini_api_key', cleanedKey);
-                return sendJson(res, 200, {
-                    success: true,
-                    message: 'Google Gemini Vision AI key saved & activated! 🚀',
-                    keyPreview: `${cleanedKey.slice(0, 6)}...${cleanedKey.slice(-4)}`
-                });
+                if (cleanedKey.startsWith('sk-')) {
+                    db.setSetting('openai_api_key', cleanedKey);
+                    return sendJson(res, 200, {
+                        success: true,
+                        message: 'ChatGPT (OpenAI) Vision AI key saved & activated! 🚀',
+                        keyPreview: `${cleanedKey.slice(0, 7)}...${cleanedKey.slice(-4)}`
+                    });
+                } else {
+                    db.setSetting('gemini_api_key', cleanedKey);
+                    return sendJson(res, 200, {
+                        success: true,
+                        message: 'Gemini Vision AI key saved & activated! 🚀',
+                        keyPreview: `${cleanedKey.slice(0, 6)}...${cleanedKey.slice(-4)}`
+                    });
+                }
             }
 
             // DELETE /api/ai/config (Remove saved API key)
             if (pathname === '/api/ai/config' && method === 'DELETE') {
+                db.setSetting('openai_api_key', '');
                 db.setSetting('gemini_api_key', '');
-                return sendJson(res, 200, { success: true, message: 'Gemini API key cleared.' });
+                return sendJson(res, 200, { success: true, message: 'AI API keys cleared.' });
             }
 
             // POST /api/ai/analyze-image (Real AI Food Vision Inspection)
@@ -541,22 +687,58 @@ const server = http.createServer(async (req, res) => {
                     return sendError(res, 400, 'Valid image data is required for AI inspection.');
                 }
 
-                const apiKey = (directKey && typeof directKey === 'string' && directKey.trim()) || getGeminiApiKey();
+                let openAiKey = getOpenAIApiKey();
+                let geminiKey = getGeminiApiKey();
 
-                if (!apiKey) {
-                    return sendError(res, 400, 'API_KEY_REQUIRED: Real Gemini Vision AI requires an API key. Please connect your Gemini API key to inspect and verify food images.');
+                if (directKey && typeof directKey === 'string' && directKey.trim()) {
+                    const trimmed = directKey.trim();
+                    if (trimmed.startsWith('sk-')) {
+                        openAiKey = trimmed;
+                    } else {
+                        geminiKey = trimmed;
+                    }
                 }
 
-                try {
-                    const analysis = await analyzeFoodImageWithGemini(image, apiKey);
-                    return sendJson(res, 200, {
-                        ...analysis,
-                        aiProvider: `Google Gemini Vision AI (${analysis.activeModel || 'gemini-1.5-flash'})`
-                    });
-                } catch (geminiErr) {
-                    console.error('Gemini Vision inspection failed:', geminiErr.message);
-                    return sendError(res, 502, 'Gemini Vision AI Error: ' + geminiErr.message);
+                if (openAiKey) {
+                    try {
+                        const analysis = await analyzeFoodImageWithOpenAI(image, openAiKey);
+                        return sendJson(res, 200, {
+                            ...analysis,
+                            aiProvider: `ChatGPT Vision AI (${analysis.activeModel || 'gpt-4o-mini'})`
+                        });
+                    } catch (openAiErr) {
+                        console.error('ChatGPT Vision inspection failed:', openAiErr.message);
+                        // If OpenAI returns insufficient_quota or other error, fallback to active Gemini if available
+                        if (geminiKey) {
+                            try {
+                                console.log('Falling back to Google Gemini Vision AI...');
+                                const analysis = await analyzeFoodImageWithGemini(image, geminiKey);
+                                return sendJson(res, 200, {
+                                    ...analysis,
+                                    aiProvider: `Google Gemini Vision (Fallback: OpenAI credit exhausted)`
+                                });
+                            } catch (geminiFallbackErr) {
+                                console.error('Gemini fallback failed:', geminiFallbackErr.message);
+                            }
+                        }
+                        return sendError(res, 502, 'ChatGPT Vision AI Error: ' + openAiErr.message);
+                    }
                 }
+
+                if (geminiKey) {
+                    try {
+                        const analysis = await analyzeFoodImageWithGemini(image, geminiKey);
+                        return sendJson(res, 200, {
+                            ...analysis,
+                            aiProvider: `Google Gemini Vision AI (${analysis.activeModel || 'gemini-flash-lite-latest'})`
+                        });
+                    } catch (geminiErr) {
+                        console.error('Gemini Vision inspection failed:', geminiErr.message);
+                        return sendError(res, 502, 'Gemini Vision AI Error: ' + geminiErr.message);
+                    }
+                }
+
+                return sendError(res, 400, 'API_KEY_REQUIRED: Real AI Vision requires an OpenAI API key. Please add your OPENAI_API_KEY in the .env file.');
             }
 
             // POST /api/reset-demo or /api/reset-data
