@@ -61,6 +61,26 @@ const API = {
     }
 };
 
+async function checkAIStatus() {
+    const modelBadge = document.getElementById("aiModelBadge");
+
+    try {
+        const status = await API.get("/ai/status");
+        if (modelBadge) {
+            modelBadge.textContent = status.hasKey
+                ? `${status.provider} (${status.model})`
+                : "Groq Vision AI (API key required)";
+        }
+        return status;
+    } catch (error) {
+        console.warn("Unable to check AI status:", error.message);
+        if (modelBadge) {
+            modelBadge.textContent = "Groq Vision AI (status unavailable)";
+        }
+        return null;
+    }
+}
+
 
 /* ================= INITIALIZATION ================= */
 
