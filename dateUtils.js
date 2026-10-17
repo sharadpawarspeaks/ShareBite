@@ -170,13 +170,14 @@ function calculateFoodPriority(expiryInput, referenceDate = new Date()) {
         return {
             valid: false,
             error: parsed.error,
-            priority: 'CRITICAL',
-            status: 'Expired',
-            isExpired: true,
-            daysRemaining: -999,
-            badgeLabel: '🔴 CRITICAL',
-            badgeClass: 'critical',
-            warning: 'Invalid or missing expiry date.'
+            priority: 'NEEDS_REVIEW',
+            priorityLevel: 'NEEDS_REVIEW',
+            status: 'Needs Review',
+            isExpired: false,
+            daysRemaining: null,
+            badgeLabel: '⚠️ NEEDS_REVIEW',
+            badgeClass: 'needs-review',
+            warning: parsed.error || 'Missing or invalid expiry date. Needs review before collection.'
         };
     }
 
@@ -185,6 +186,7 @@ function calculateFoodPriority(expiryInput, referenceDate = new Date()) {
     const expiresToday = daysRemaining === 0;
 
     let priority;
+    let priorityLevel;
     let badgeClass;
     let badgeLabel;
     let warning;
@@ -192,6 +194,7 @@ function calculateFoodPriority(expiryInput, referenceDate = new Date()) {
 
     if (isExpired) {
         priority = 'CRITICAL';
+        priorityLevel = 'CRITICAL';
         badgeClass = 'critical';
         const absDays = Math.abs(daysRemaining);
         badgeLabel = '🔴 CRITICAL — Expired';
@@ -199,26 +202,30 @@ function calculateFoodPriority(expiryInput, referenceDate = new Date()) {
         status = 'Expired';
     } else if (expiresToday) {
         priority = 'CRITICAL';
+        priorityLevel = 'CRITICAL';
         badgeClass = 'critical';
         badgeLabel = '🔴 CRITICAL — Expires today';
         warning = 'Food expires today! Must be reviewed urgently and handled according to food-safety requirements.';
         status = 'Available';
     } else if (daysRemaining <= 2) {
         priority = 'HIGH';
+        priorityLevel = 'HIGH';
         badgeClass = 'high';
         badgeLabel = `🟠 HIGH — Expires in ${daysRemaining} day${daysRemaining === 1 ? '' : 's'}`;
         warning = 'Urgent: Food expires in 1–2 days. Fast redistribution recommended.';
         status = 'Available';
     } else if (daysRemaining <= 5) {
         priority = 'MEDIUM';
+        priorityLevel = 'MEDIUM';
         badgeClass = 'medium';
         badgeLabel = `🟡 MEDIUM — Expires in ${daysRemaining} days`;
         warning = 'Moderate urgency: Food expires in 3–5 days.';
         status = 'Available';
     } else {
         priority = 'LOW';
+        priorityLevel = 'NORMAL';
         badgeClass = 'low';
-        badgeLabel = `🟢 LOW — Expires in ${daysRemaining} days`;
+        badgeLabel = `🟢 NORMAL — Expires in ${daysRemaining} days`;
         warning = 'Standard window: Food expires in more than 5 days.';
         status = 'Available';
     }
@@ -226,6 +233,7 @@ function calculateFoodPriority(expiryInput, referenceDate = new Date()) {
     return {
         valid: true,
         priority,
+        priorityLevel,
         badgeClass,
         badgeLabel,
         daysRemaining,

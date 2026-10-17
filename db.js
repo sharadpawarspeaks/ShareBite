@@ -275,6 +275,73 @@ function seedInitialData() {
 }
 
 // -------------------------------------------------------------
+// Auto-Delete Expired Food
+// -------------------------------------------------------------
+function purgeExpiredDonations(referenceDate = new Date()) {
+    try {
+        const rows = db.prepare(`
+            SELECT id, donor_id, donor_name, donor_email, food_name, quantity, expiry_date, status, accepted_by_email
+            FROM donations
+            WHERE status != 'Completed';
+        `).all();
+
+        const deletedIds = [];
+        const deleteStmt = db.prepare('DELETE FROM donations WHERE id = ?;');
+
+        for (const row of rows) {
+            let isExpired = false;
+            if (row.status === 'Expired') {
+                isExpired = true;
+            } else {
+                try {
+                    const priorityInfo = dateUtils.calculateFoodPriority(row.expiry_date, referenceDate);
+                    if (priorityInfo.isExpired) {
+                        isExpired = true;
+                    }
+                } catch (e) {}
+            }
+
+            if (isExpired) {
+                deleteStmt.run(row.id);
+                deletedIds.push(row.id);
+
+                // Notify donor about automatic deletion
+                try {
+                    addNotification(
+                        row.donor_email,
+                        'donor',
+                        'Food Expired & Automatically Deleted 🗑️',
+                        `Your listing "${row.food_name}" (${row.quantity} kg) reached its expiration date (${dateUtils.formatDateToDisplay(row.expiry_date)}) and has been automatically removed from the database for food safety compliance.`
+                    );
+                } catch (notifErr) {}
+
+                // If an NGO had accepted it, notify the NGO that the food expired before pickup
+                if (row.accepted_by_email) {
+                    try {
+                        addNotification(
+                            row.accepted_by_email,
+                            'ngo',
+                            'Accepted Food Expired ⚠️',
+                            `The accepted listing "${row.food_name}" from ${row.donor_name} reached its expiration date before collection and was automatically deleted from the database.`
+                        );
+                    } catch (notifErr) {}
+                }
+
+                console.log(`[Auto-Delete] Expired food item deleted from database: ID ${row.id} ("${row.food_name}", expiry: ${row.expiry_date})`);
+            }
+        }
+
+        return {
+            deletedCount: deletedIds.length,
+            deletedIds
+        };
+    } catch (err) {
+        console.error('Error in purgeExpiredDonations:', err.message);
+        return { deletedCount: 0, deletedIds: [] };
+    }
+}
+
+// -------------------------------------------------------------
 // Mapping Helpers
 // -------------------------------------------------------------
 function mapDonation(row) {
@@ -284,12 +351,12 @@ function mapDonation(row) {
     const priorityInfo = dateUtils.calculateFoodPriority(row.expiry_date);
     let status = row.status;
 
-    // If an available donation has expired, update its status to Expired
-    if (status === 'Available' && priorityInfo.isExpired) {
+    // If an uncompleted donation has expired, automatically delete it from database
+    if (status !== 'Completed' && (priorityInfo.isExpired || status === 'Expired')) {
         status = 'Expired';
         try {
-            db.prepare("UPDATE donations SET status = 'Expired', priority = ? WHERE id = ? AND status = 'Available';")
-              .run(priorityInfo.priority, row.id);
+            db.prepare("DELETE FROM donations WHERE id = ?;").run(row.id);
+            console.log(`[Auto-Delete] Expired donation automatically deleted from database: ID ${row.id} ("${row.food_name}")`);
         } catch (e) {}
     }
 
@@ -444,6 +511,9 @@ function deleteSession(token) {
 // Donation Operations
 // -------------------------------------------------------------
 function getDonations(filters = {}) {
+    // Automatically purge expired food from database
+    purgeExpiredDonations();
+
     let sql = 'SELECT * FROM donations WHERE 1=1';
     const params = [];
 
@@ -504,6 +574,14 @@ function getDonationById(id) {
 }
 
 function createDonation(data, user) {
+    if (!user) {
+        user = getUserByEmail(data.donorEmail || 'donor@foodshare.org') || {
+            id: 1,
+            name: data.donorName || 'Community Member',
+            email: data.donorEmail || 'donor@foodshare.org'
+        };
+    }
+
     if (!data.foodName || !data.foodName.trim()) {
         throw new Error('Food name is required.');
     }
@@ -541,7 +619,7 @@ function createDonation(data, user) {
 
     // Mandatory Food Image Validation (Must be persistent image data or URL, not serverless /tmp)
     if (!data.image || typeof data.image !== 'string' || (!data.image.startsWith('data:image/') && !data.image.startsWith('http://') && !data.image.startsWith('https://'))) {
-        throw new Error('Food photo is required. Please upload an image of the food (JPG, JPEG, PNG, WebP).');
+        throw new Error('Please upload a photo of the food before listing it.');
     }
 
     // Server-side food priority calculation based SOLELY on expiry date
@@ -596,7 +674,7 @@ function createDonation(data, user) {
 function acceptDonation(donationId, ngoUser) {
     const donation = getDonationById(donationId);
     if (!donation) {
-        throw new Error('Donation not found.');
+        throw new Error('This donation has expired and was removed, or does not exist.');
     }
 
     // Expired donations must NOT be offered for redistribution or accepted
@@ -711,12 +789,10 @@ function cancelDonation(donationId, donorUser) {
 // Stats & Impact
 // -------------------------------------------------------------
 function getStats() {
-    const totalFoodRow = db.prepare(`
-        SELECT COALESCE(SUM(quantity), 0) as totalFood, COUNT(*) as count 
-        FROM donations 
-        WHERE status != 'Cancelled';
-    `).get();
+    // Automatically purge expired food before calculating statistics
+    purgeExpiredDonations();
 
+    // Lifetime completed donations across all registered users
     const completedRow = db.prepare(`
         SELECT COUNT(*) as completedCount, COALESCE(SUM(quantity), 0) as completedFood 
         FROM donations 
@@ -729,16 +805,20 @@ function getStats() {
         WHERE status = 'Available';
     `).get();
 
-    const totalFood = Number(totalFoodRow.totalFood || 0);
-    const totalMeals = Math.round(totalFood * 4);
+    const completedFood = Number(Number(completedRow ? (completedRow.completedFood || 0) : 0).toFixed(1));
+    const completedMeals = Math.round(completedFood * 4);
+    const completedCount = Number(completedRow ? (completedRow.completedCount || 0) : 0);
 
     return {
-        totalFood: Number(totalFood.toFixed(1)),
-        totalMeals,
-        totalDonations: totalFoodRow.count,
-        completedCount: completedRow.completedCount,
-        completedFood: Number(Number(completedRow.completedFood || 0).toFixed(1)),
-        availableCount: availableRow.availableCount
+        // Lifetime cumulative totals across all completed donations
+        totalFood: completedFood,
+        totalMeals: completedMeals,
+        totalDonations: completedCount,
+        completedFood,
+        completedCount,
+        availableCount: availableRow ? Number(availableRow.availableCount || 0) : 0,
+        conversionRate: '4 meals per kg of completed food',
+        isLifetime: true
     };
 }
 
@@ -976,6 +1056,9 @@ try {
 // Initialize tables on startup
 initSchema();
 
+// Automatically purge expired food on database connection
+purgeExpiredDonations();
+
 module.exports = {
     getUserByEmail,
     getUserById,
@@ -991,6 +1074,8 @@ module.exports = {
     acceptDonation,
     completeDonation,
     cancelDonation,
+    purgeExpiredDonations,
+    deleteExpiredDonations: purgeExpiredDonations,
     getStats,
     getNotifications,
     addNotification,
@@ -1011,5 +1096,6 @@ module.exports = {
     completePasswordReset,
     revokeAllSessionsForUser,
     expireResetRequestForTesting,
-    clearPasswordResetsForTesting
+    clearPasswordResetsForTesting,
+    clearDonationsForTesting: () => db.prepare('DELETE FROM donations;').run()
 };

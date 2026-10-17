@@ -89,7 +89,7 @@ document.addEventListener("DOMContentLoaded", async function () {
     await syncSessionWithBackend();
     await loadInitialData();
     await checkAIStatus();
-    await initGoogleMaps();
+    await initMapIntegration();
 
     // Setup live auto-refresh (polls server every 4s when window has focus)
     setupLiveSync();
@@ -223,9 +223,9 @@ async function loadStatsFromServer(showLoader = true) {
     try {
         const stats = await API.get("/stats");
         renderHomeStats(stats);
-    } catch {
-        // Fallback calculations from local array
-        updateHomeStatsLocal();
+    } catch (err) {
+        console.warn("Could not load stats from server:", err);
+        renderHomeStats({ totalFood: 0, totalMeals: 0, totalDonations: 0 });
     }
 }
 
@@ -235,7 +235,7 @@ async function loadDonationsFromServer(updateViews = true) {
         donations = data;
 
         if (updateViews) {
-            updateHomeStatsLocal();
+            loadStatsFromServer(false);
             if (currentUser) {
                 if (currentUser.role === "donor") {
                     updateDonorDashboard();
@@ -390,25 +390,17 @@ function renderHomeStats(stats) {
     const mealsElement = document.getElementById("heroMeals");
     const donationsElement = document.getElementById("heroDonations");
 
-    if (foodElement) foodElement.textContent = `${stats.totalFood.toFixed(1)} kg`;
-    if (mealsElement) mealsElement.textContent = stats.totalMeals.toLocaleString();
-    if (donationsElement) donationsElement.textContent = stats.totalDonations;
-}
-
-function updateHomeStatsLocal() {
-    const totalFood = donations.reduce(
-        (sum, donation) => sum + Number(donation.quantity || 0),
-        0
-    );
-    const totalMeals = Math.round(totalFood * 4);
-
-    const foodElement = document.getElementById("heroFood");
-    const mealsElement = document.getElementById("heroMeals");
-    const donationsElement = document.getElementById("heroDonations");
+    const totalFood = Number(stats?.totalFood || 0);
+    const totalMeals = Number(stats?.totalMeals || 0);
+    const totalDonations = Number(stats?.totalDonations || 0);
 
     if (foodElement) foodElement.textContent = `${totalFood.toFixed(1)} kg`;
     if (mealsElement) mealsElement.textContent = totalMeals.toLocaleString();
-    if (donationsElement) donationsElement.textContent = donations.length;
+    if (donationsElement) donationsElement.textContent = totalDonations;
+}
+
+function updateHomeStatsLocal() {
+    loadStatsFromServer(false);
 }
 
 
@@ -1344,12 +1336,10 @@ async function donorTab(tab, button = null) {
         await loadDonationsFromServer(false);
     }
 
-    if (tab === "donate" && googleMapInstance && window.google) {
+    if (tab === "donate" && donorMap) {
         setTimeout(() => {
-            google.maps.event.trigger(googleMapInstance, "resize");
-            const pos = googleMapMarker?.getPosition() || defaultMapCoords;
-            googleMapInstance.setCenter(pos);
-        }, 100);
+            donorMap.invalidateSize();
+        }, 150);
     }
 
     if (tab === "overview") {
@@ -1497,15 +1487,14 @@ function setupDonationForm() {
 
         // Mandatory food image validation (compulsory)
         if (!uploadedImageBase64) {
-            showToast("⚠️ Food photo is required. Please upload an image of the food.");
+            showToast("Please upload a photo of the food before listing it.");
             if (imgErrorEl) {
-                imgErrorEl.textContent = "Food photo is required. Please upload an image (JPG, PNG, WebP).";
+                imgErrorEl.textContent = "Please upload a photo of the food before listing it.";
                 imgErrorEl.classList.remove("hidden");
             }
-            const box = document.getElementById("foodUploadBox");
-            if (box) {
-                box.scrollIntoView({ behavior: "smooth", block: "center" });
-                box.style.borderColor = "var(--danger, #dc2626)";
+            const section = document.getElementById("foodImageSection");
+            if (section) {
+                section.scrollIntoView({ behavior: "smooth", block: "center" });
             }
             return;
         }
@@ -1632,20 +1621,23 @@ function updatePriorityPreview() {
 }
 
 function getPriorityBadgeHTML(donation) {
-    const p = (donation.priority || "LOW").toUpperCase();
+    const p = (donation.priority || "NORMAL").toUpperCase();
     if (donation.isExpired || donation.status === "Expired") {
         return `<span class="priority-badge critical" title="Food has expired. Expired food must not be offered for redistribution.">🔴 CRITICAL</span>`;
     }
     if (p === "CRITICAL") {
-        return `<span class="priority-badge critical" title="Food expires today or requires urgent review">🔴 CRITICAL</span>`;
+        return `<span class="priority-badge critical" title="Less than 6 hours remaining">🔴 CRITICAL</span>`;
     }
     if (p === "HIGH") {
-        return `<span class="priority-badge high" title="Food expires within 1–2 days">🟠 HIGH</span>`;
+        return `<span class="priority-badge high" title="6 to 24 hours remaining">🟠 HIGH</span>`;
     }
     if (p === "MEDIUM") {
-        return `<span class="priority-badge medium" title="Food expires in 3–5 days">🟡 MEDIUM</span>`;
+        return `<span class="priority-badge medium" title="1 to 3 days remaining">🟡 MEDIUM</span>`;
     }
-    return `<span class="priority-badge low" title="Food expires in more than 5 days">🟢 LOW</span>`;
+    if (p === "NEEDS_REVIEW") {
+        return `<span class="priority-badge needs-review" title="Missing or invalid expiry information">🟣 NEEDS REVIEW</span>`;
+    }
+    return `<span class="priority-badge low" title="More than 3 days remaining">🟢 NORMAL</span>`;
 }
 
 function getDaysRemainingText(donation) {
@@ -1699,174 +1691,102 @@ function compressImageFile(file, maxWidth = 750, maxHeight = 750, quality = 0.8)
     });
 }
 
-/* ================= GOOGLE MAPS LOCATION PICKER INTEGRATION ================= */
+/* ================= MAPTILER & LEAFLET LOCATION INTEGRATION ================= */
 
-let googleMapInstance = null;
-let googleMapMarker = null;
-let googleMapGeocoder = null;
-let googlePlacesAutocomplete = null;
-let isGoogleMapsLoaded = false;
-let defaultMapCoords = { lat: 19.0760, lng: 72.8777 }; // Default fallback center (Mumbai / City Center)
+let donorMap = null;
+let donorMarker = null;
+let mapConfigCache = null;
+let defaultMapCoords = [19.0760, 72.8777]; // Default fallback center (Mumbai / City Center)
 
-async function initGoogleMaps() {
+let ngoFoodMapInstance = null;
+let ngoMapMarkersLayer = null;
+let isNgoMapViewActive = false;
+
+async function initMapIntegration() {
     try {
-        const config = await API.get("/config/maps");
-        if (config && config.hasKey && config.key) {
-            loadGoogleMapsScript(config.key);
-        } else {
-            updateMapPlaceholderState(false);
-        }
+        const config = await API.get("/map-config");
+        mapConfigCache = config;
+        setupDonorMapPicker();
     } catch (err) {
-        console.warn("Could not check Google Maps configuration:", err);
+        console.warn("Could not load map configuration from server:", err);
+        setupDonorMapPicker();
     }
 }
 
-function loadGoogleMapsScript(apiKey) {
-    if (window.google && window.google.maps) {
-        setupGoogleMapPicker();
+function setupDonorMapPicker() {
+    const container = document.getElementById("maptilerMapPicker");
+    if (!container || typeof L === "undefined") return;
+
+    if (donorMap) {
+        donorMap.invalidateSize();
         return;
     }
-
-    if (document.getElementById("googleMapsScriptTag")) {
-        return;
-    }
-
-    window.onGoogleMapsLoaded = function () {
-        isGoogleMapsLoaded = true;
-        setupGoogleMapPicker();
-    };
-
-    const script = document.createElement("script");
-    script.id = "googleMapsScriptTag";
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places&callback=onGoogleMapsLoaded`;
-    script.async = true;
-    script.defer = true;
-    script.onerror = function () {
-        console.error("Failed to load Google Maps script. Check your API key and enabled APIs.");
-        showToast("⚠️ Could not load Google Maps. Please check your API key.");
-    };
-    document.head.appendChild(script);
-}
-
-function updateMapPlaceholderState(hasKey) {
-    const badge = document.getElementById("mapLoadedBadge");
-    const placeholder = document.getElementById("mapPickerPlaceholder");
-    if (badge) {
-        if (hasKey) {
-            badge.classList.remove("hidden");
-            badge.textContent = "🗺️ Google Maps Active";
-        } else {
-            badge.classList.add("hidden");
-        }
-    }
-    if (placeholder && hasKey) {
-        placeholder.style.display = "none";
-    }
-}
-
-function setupGoogleMapPicker() {
-    const mapEl = document.getElementById("googleMapPicker");
-    const inputEl = document.getElementById("pickupLocation");
-    if (!mapEl || !window.google || !window.google.maps) return;
-
-    updateMapPlaceholderState(true);
 
     const latInput = document.getElementById("pickupLatitude");
     const lngInput = document.getElementById("pickupLongitude");
     let initialCenter = defaultMapCoords;
-    let hasExistingCoords = false;
 
     if (latInput && lngInput && latInput.value && lngInput.value) {
         const lat = parseFloat(latInput.value);
         const lng = parseFloat(lngInput.value);
         if (!isNaN(lat) && !isNaN(lng)) {
-            initialCenter = { lat, lng };
-            hasExistingCoords = true;
+            initialCenter = [lat, lng];
         }
     }
 
-    googleMapGeocoder = new google.maps.Geocoder();
+    donorMap = L.map("maptilerMapPicker").setView(initialCenter, 13);
 
-    googleMapInstance = new google.maps.Map(mapEl, {
-        center: initialCenter,
-        zoom: hasExistingCoords ? 16 : 14,
-        mapTypeControl: false,
-        streetViewControl: false,
-        fullscreenControl: true,
-        zoomControl: true,
-        gestureHandling: "cooperative"
-    });
+    const maptilerKey = mapConfigCache?.maptilerKey;
+    const badge = document.getElementById("mapLoadedBadge");
 
-    googleMapMarker = new google.maps.Marker({
-        position: initialCenter,
-        map: googleMapInstance,
-        draggable: true,
-        animation: google.maps.Animation.DROP,
-        title: "Drag to set exact pickup location"
-    });
-
-    updateCoordsDisplay(initialCenter.lat, initialCenter.lng);
-
-    googleMapMarker.addListener("dragend", function () {
-        const pos = googleMapMarker.getPosition();
-        if (!pos) return;
-        const lat = pos.lat();
-        const lng = pos.lng();
-        updateSelectedCoordinates(lat, lng);
-        reverseGeocodePosition(lat, lng);
-    });
-
-    googleMapInstance.addListener("click", function (event) {
-        if (!event.latLng) return;
-        const lat = event.latLng.lat();
-        const lng = event.latLng.lng();
-        googleMapMarker.setPosition(event.latLng);
-        updateSelectedCoordinates(lat, lng);
-        reverseGeocodePosition(lat, lng);
-    });
-
-    if (inputEl && window.google.maps.places) {
-        googlePlacesAutocomplete = new google.maps.places.Autocomplete(inputEl, {
-            fields: ["formatted_address", "geometry", "name"]
-        });
-
-        googlePlacesAutocomplete.bindTo("bounds", googleMapInstance);
-
-        googlePlacesAutocomplete.addListener("place_changed", function () {
-            const place = googlePlacesAutocomplete.getPlace();
-            if (!place.geometry || !place.geometry.location) {
-                return;
-            }
-
-            const loc = place.geometry.location;
-            const lat = loc.lat();
-            const lng = loc.lng();
-
-            googleMapInstance.setCenter(loc);
-            googleMapInstance.setZoom(16);
-            googleMapMarker.setPosition(loc);
-
-            updateSelectedCoordinates(lat, lng);
-
-            if (place.formatted_address) {
-                inputEl.value = place.formatted_address;
-            }
-        });
+    if (maptilerKey) {
+        L.tileLayer(`https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=${encodeURIComponent(maptilerKey)}`, {
+            attribution: '© <a href="https://www.maptiler.com/copyright/" target="_blank">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>',
+            maxZoom: 19
+        }).addTo(donorMap);
+        if (badge) {
+            badge.textContent = "🗺️ MapTiler Active";
+            badge.classList.remove("hidden");
+        }
+    } else {
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors',
+            maxZoom: 19
+        }).addTo(donorMap);
+        if (badge) {
+            badge.textContent = "🗺️ Interactive Map Active";
+            badge.classList.remove("hidden");
+        }
     }
 
-    if (!hasExistingCoords && navigator.geolocation) {
+    donorMarker = L.marker(initialCenter, { draggable: true }).addTo(donorMap);
+
+    donorMarker.on("dragend", function (e) {
+        const pos = e.target.getLatLng();
+        updateSelectedCoordinates(pos.lat, pos.lng);
+        reverseGeocodePosition(pos.lat, pos.lng);
+    });
+
+    donorMap.on("click", function (e) {
+        donorMarker.setLatLng(e.latlng);
+        updateSelectedCoordinates(e.latlng.lat, e.latlng.lng);
+        reverseGeocodePosition(e.latlng.lat, e.latlng.lng);
+    });
+
+    // Attempt gentle user geolocation if no coords pre-filled
+    if (!latInput?.value && navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
             (pos) => {
-                const userLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                const userLoc = [pos.coords.latitude, pos.coords.longitude];
                 defaultMapCoords = userLoc;
-                if (googleMapInstance) {
-                    googleMapInstance.setCenter(userLoc);
-                    if (googleMapMarker) googleMapMarker.setPosition(userLoc);
-                    updateCoordsDisplay(userLoc.lat, userLoc.lng);
+                if (donorMap && donorMarker) {
+                    donorMap.setView(userLoc, 15);
+                    donorMarker.setLatLng(userLoc);
+                    updateSelectedCoordinates(pos.coords.latitude, pos.coords.longitude);
                 }
             },
             () => {},
-            { timeout: 8000 }
+            { timeout: 7000 }
         );
     }
 }
@@ -1874,8 +1794,8 @@ function setupGoogleMapPicker() {
 function updateSelectedCoordinates(lat, lng) {
     const latInput = document.getElementById("pickupLatitude");
     const lngInput = document.getElementById("pickupLongitude");
-    if (latInput) latInput.value = lat.toFixed(6);
-    if (lngInput) lngInput.value = lng.toFixed(6);
+    if (latInput) latInput.value = Number(lat).toFixed(6);
+    if (lngInput) lngInput.value = Number(lng).toFixed(6);
     updateCoordsDisplay(lat, lng);
 }
 
@@ -1883,31 +1803,30 @@ function updateCoordsDisplay(lat, lng) {
     const textEl = document.getElementById("mapCoordsText");
     const statusText = document.getElementById("mapStatusText");
     if (textEl && lat && lng) {
-        textEl.textContent = `📍 ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+        textEl.textContent = `📍 ${Number(lat).toFixed(4)}, ${Number(lng).toFixed(4)}`;
     }
     if (statusText) {
         statusText.innerHTML = `✅ <strong>Location pinned</strong> (drag to fine-tune)`;
     }
 }
 
-function reverseGeocodePosition(lat, lng) {
-    if (!googleMapGeocoder) return;
-    const latLng = { lat, lng };
-
-    googleMapGeocoder.geocode({ location: latLng }, function (results, status) {
-        if (status === "OK" && results && results[0]) {
-            const inputEl = document.getElementById("pickupLocation");
-            if (inputEl) {
-                inputEl.value = results[0].formatted_address;
-            }
-            showToast(`📍 Location pinned: ${results[0].formatted_address.slice(0, 45)}...`);
+async function reverseGeocodePosition(lat, lng) {
+    try {
+        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const inputEl = document.getElementById("pickupLocation");
+        if (data && data.display_name && inputEl) {
+            inputEl.value = data.display_name;
+            showToast(`📍 Location pinned: ${data.display_name.slice(0, 45)}...`);
         }
-    });
+    } catch {
+        // Fallback silently if offline or blocked
+    }
 }
 
 function detectUserLocation() {
     const btn = document.getElementById("btnDetectLocation");
-    const inputEl = document.getElementById("pickupLocation");
     const origHtml = btn ? btn.innerHTML : "";
 
     if (!navigator.geolocation) {
@@ -1926,25 +1845,10 @@ function detectUserLocation() {
             const lng = position.coords.longitude;
             updateSelectedCoordinates(lat, lng);
 
-            if (googleMapInstance && googleMapMarker && window.google) {
-                const userLatLng = new google.maps.LatLng(lat, lng);
-                googleMapInstance.setCenter(userLatLng);
-                googleMapInstance.setZoom(16);
-                googleMapMarker.setPosition(userLatLng);
+            if (donorMap && donorMarker) {
+                donorMarker.setLatLng([lat, lng]);
+                donorMap.setView([lat, lng], 15);
                 reverseGeocodePosition(lat, lng);
-            } else {
-                try {
-                    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
-                    const data = await res.json();
-                    if (data && data.display_name && inputEl) {
-                        inputEl.value = data.display_name;
-                        showToast("📍 Current location detected!");
-                    } else if (inputEl) {
-                        inputEl.value = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-                    }
-                } catch {
-                    if (inputEl) inputEl.value = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-                }
             }
 
             if (btn) {
@@ -1965,29 +1869,10 @@ function detectUserLocation() {
     );
 }
 
-async function saveGoogleMapsKeyFromUI() {
-    const input = document.getElementById("inputGoogleMapsKey");
-    if (!input || !input.value.trim()) {
-        showToast("Please paste your Google Maps API key first.");
-        return;
-    }
-
-    const key = input.value.trim();
-    try {
-        showToast("Saving Google Maps API key... ⏳");
-        const res = await API.post("/config/maps", { apiKey: key });
-        showToast("✅ " + res.message);
-        loadGoogleMapsScript(key);
-    } catch (err) {
-        showToast("Error saving Google Maps key: " + err.message);
-    }
-}
-
 function resetMapPicker() {
-    if (googleMapMarker && googleMapInstance) {
-        googleMapMarker.setPosition(defaultMapCoords);
-        googleMapInstance.setCenter(defaultMapCoords);
-        googleMapInstance.setZoom(14);
+    if (donorMarker && donorMap) {
+        donorMarker.setLatLng(defaultMapCoords);
+        donorMap.setView(defaultMapCoords, 13);
     }
     const statusText = document.getElementById("mapStatusText");
     const coordsText = document.getElementById("mapCoordsText");
@@ -1995,356 +1880,310 @@ function resetMapPicker() {
     if (coordsText) coordsText.textContent = "";
 }
 
-/* ================= REAL AI VISION INTEGRATION ================= */
+function toggleNgoAvailableView() {
+    isNgoMapViewActive = !isNgoMapViewActive;
+    const btn = document.getElementById("btnNgoViewToggle");
+    const mapWrapper = document.getElementById("ngoMapWrapper");
+    const listWrapper = document.getElementById("ngoAvailableContainer");
 
-let isAnalyzingImage = false;
-let lastAIVerifiedStatus = null; // { isFood: boolean, isSafeForDonation: boolean, foodName?: string }
-let latestAISuggestions = null;
+    if (isNgoMapViewActive) {
+        if (btn) btn.innerHTML = "📋 List View";
+        if (mapWrapper) mapWrapper.classList.remove("hidden");
+        if (listWrapper) listWrapper.classList.add("hidden");
+        renderNgoFoodMap();
+    } else {
+        if (btn) btn.innerHTML = "🗺️ Map View";
+        if (mapWrapper) mapWrapper.classList.add("hidden");
+        if (listWrapper) listWrapper.classList.remove("hidden");
+    }
+}
 
-function setupImageUpload() {
-    const input = document.getElementById("foodImage");
-    if (!input) return;
+function renderNgoFoodMap() {
+    const mapEl = document.getElementById("ngoFoodMap");
+    const emptyState = document.getElementById("ngoMapEmptyState");
+    if (!mapEl || typeof L === "undefined") return;
 
-    input.addEventListener("change", async function () {
-        const file = this.files[0];
-        if (!file) return;
-
-        const errorEl = document.getElementById("foodImageError");
-        const uploadBox = document.getElementById("foodUploadBox");
-        if (errorEl) errorEl.classList.add("hidden");
-        if (uploadBox) uploadBox.style.borderColor = "";
-
-        const validTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
-        if (!validTypes.includes(file.type.toLowerCase())) {
-            showToast("Invalid file type. Please upload a JPG, JPEG, PNG, or WebP photo.");
-            if (errorEl) {
-                errorEl.textContent = "Please upload a valid image file (JPG, JPEG, PNG, or WebP).";
-                errorEl.classList.remove("hidden");
-            }
-            this.value = "";
-            return;
+    if (!ngoFoodMapInstance) {
+        ngoFoodMapInstance = L.map("ngoFoodMap").setView([19.0760, 72.8777], 12);
+        const maptilerKey = mapConfigCache?.maptilerKey;
+        if (maptilerKey) {
+            L.tileLayer(`https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=${encodeURIComponent(maptilerKey)}`, {
+                attribution: '© <a href="https://www.maptiler.com/copyright/" target="_blank">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>',
+                maxZoom: 19
+            }).addTo(ngoFoodMapInstance);
+        } else {
+            L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+                attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors',
+                maxZoom: 19
+            }).addTo(ngoFoodMapInstance);
         }
+        ngoMapMarkersLayer = L.layerGroup().addTo(ngoFoodMapInstance);
+    }
 
-        // Validate file size (max 5MB)
-        if (file.size > 5 * 1024 * 1024) {
-            showToast("Image size exceeds 5MB limit. Please choose a smaller photo.");
-            if (errorEl) {
-                errorEl.textContent = "Image size exceeds 5MB limit. Please choose a smaller photo.";
-                errorEl.classList.remove("hidden");
-            }
-            this.value = "";
-            return;
-        }
+    setTimeout(() => {
+        if (ngoFoodMapInstance) ngoFoodMapInstance.invalidateSize();
+    }, 150);
 
-        try {
-            const compressed = await compressImageFile(file);
-            uploadedImageBase64 = compressed;
+    if (ngoMapMarkersLayer) {
+        ngoMapMarkersLayer.clearLayers();
+    }
 
-            const previewImg = document.getElementById("imagePreview");
-            const container = document.getElementById("imagePreviewContainer");
-            const reqBadge = document.getElementById("foodImageRequirementBadge");
+    const available = donations.filter(d => d.status === "Available" && !d.isExpired);
+    const geoDonations = available.filter(d => d.latitude && d.longitude && !isNaN(d.latitude) && !isNaN(d.longitude));
 
-            if (previewImg) {
-                previewImg.src = compressed;
-                previewImg.className = "food-preview";
-            }
-            if (container) container.classList.remove("hidden");
-            if (reqBadge) {
-                reqBadge.className = "status accepted";
-                reqBadge.textContent = "Photo Attached ✅";
-            }
+    if (geoDonations.length === 0) {
+        if (emptyState) emptyState.classList.remove("hidden");
+        return;
+    }
 
-            showToast("📸 Food photo attached! Ready for submission.");
-        } catch (err) {
-            console.error("Image processing error:", err);
-            showToast("Could not process the selected image.");
-        }
+    if (emptyState) emptyState.classList.add("hidden");
+
+    const markerBounds = [];
+    const priorityColors = {
+        CRITICAL: "#dc2626",
+        HIGH: "#ea580c",
+        MEDIUM: "#d97706",
+        NORMAL: "#16a34a",
+        LOW: "#16a34a",
+        NEEDS_REVIEW: "#9333ea"
+    };
+
+    geoDonations.forEach(donation => {
+        const lat = Number(donation.latitude);
+        const lng = Number(donation.longitude);
+        const prio = (donation.priority || "NORMAL").toUpperCase();
+        const color = priorityColors[prio] || "#16a34a";
+
+        const iconHtml = `
+            <div style="background:${color};width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 8px rgba(0,0,0,0.3);border:2.5px solid #fff;color:#fff;font-size:14px;cursor:pointer;">
+                🍱
+            </div>
+        `;
+        const customIcon = L.divIcon({
+            html: iconHtml,
+            className: "custom-map-pin",
+            iconSize: [30, 30],
+            iconAnchor: [15, 15],
+            popupAnchor: [0, -15]
+        });
+
+        const marker = L.marker([lat, lng], { icon: customIcon });
+
+        const popupContent = `
+            <div class="map-popup-card" style="font-family:inherit;min-width:240px;max-width:280px;padding:4px;">
+                ${donation.image ? `<img src="${escapeHTML(donation.image)}" alt="${escapeHTML(donation.foodName)}" style="width:100%;height:120px;object-fit:cover;border-radius:8px;margin-bottom:8px;display:block;">` : ''}
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;gap:6px;">
+                    <strong style="font-size:14px;color:var(--ink);">${escapeHTML(donation.foodName)}</strong>
+                    ${getPriorityBadgeHTML(donation)}
+                </div>
+                <p style="margin:2px 0;font-size:12px;color:var(--muted);">
+                    ${escapeHTML(donation.foodType)} • <strong>${donation.quantity} kg</strong>
+                </p>
+                <p style="margin:2px 0;font-size:11px;color:var(--muted);">📍 ${escapeHTML(donation.pickupLocation)}</p>
+                <p style="margin:2px 0;font-size:11px;">📅 Expiry: <strong>${formatDate(donation.expiryDate)}</strong></p>
+                <div style="margin-top:10px;display:flex;gap:6px;">
+                    <button class="small-btn small-btn-secondary" style="flex:1;font-size:11px;justify-content:center;" onclick="openFoodDetail(${donation.id})">👁️ Details</button>
+                    <button class="small-btn" style="flex:1;font-size:11px;justify-content:center;" onclick="acceptDonation(${donation.id})">🤝 Accept</button>
+                </div>
+            </div>
+        `;
+
+        marker.bindPopup(popupContent);
+        marker.addTo(ngoMapMarkersLayer);
+        markerBounds.push([lat, lng]);
     });
+
+    if (markerBounds.length > 0) {
+        ngoFoodMapInstance.fitBounds(markerBounds, { padding: [40, 40], maxZoom: 15 });
+    }
+}
+
+
+/* ================= MANDATORY FOOD IMAGE UPLOAD (CAMERA & GALLERY) ================= */
+
+let activeWebcamStream = null;
+
+async function triggerCameraCapture() {
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    const cameraInput = document.getElementById("foodCameraInput");
+
+    // If mobile or if getUserMedia is not supported, trigger rear camera input
+    if (isMobile || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        if (cameraInput) cameraInput.click();
+        return;
+    }
+
+    // On desktop, open webcam capture modal
+    const modal = document.getElementById("webcamModal");
+    const video = document.getElementById("webcamVideo");
+    if (!modal || !video) {
+        if (cameraInput) cameraInput.click();
+        return;
+    }
+
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
+        });
+        activeWebcamStream = stream;
+        video.srcObject = stream;
+        modal.classList.remove("hidden");
+    } catch (err) {
+        console.warn("Webcam access error or permission denied:", err);
+        showToast("Camera access unavailable or denied. Opening file selector instead.");
+        if (cameraInput) cameraInput.click();
+    }
+}
+
+function closeWebcamModal() {
+    if (activeWebcamStream) {
+        activeWebcamStream.getTracks().forEach(track => track.stop());
+        activeWebcamStream = null;
+    }
+    const modal = document.getElementById("webcamModal");
+    if (modal) modal.classList.add("hidden");
+}
+
+function captureWebcamSnapshot() {
+    const video = document.getElementById("webcamVideo");
+    const canvas = document.getElementById("webcamCanvas");
+    if (!video || !canvas) return;
+
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const base64Data = canvas.toDataURL("image/jpeg", 0.85);
+    uploadedImageBase64 = base64Data;
+
+    const previewImg = document.getElementById("imagePreview");
+    const container = document.getElementById("imagePreviewContainer");
+    const reqBadge = document.getElementById("foodImageRequirementBadge");
+    const errorEl = document.getElementById("foodImageError");
+
+    if (previewImg) previewImg.src = base64Data;
+    if (container) container.classList.remove("hidden");
+    if (errorEl) errorEl.classList.add("hidden");
+    if (reqBadge) {
+        reqBadge.className = "status accepted";
+        reqBadge.textContent = "Photo Attached ✅";
+    }
+
+    closeWebcamModal();
+    showToast("📸 Food photo captured successfully!");
+}
+
+async function handleImageFileSelected(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+
+    const errorEl = document.getElementById("foodImageError");
+    if (errorEl) errorEl.classList.add("hidden");
+
+    const validTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    if (!validTypes.includes(file.type.toLowerCase())) {
+        showToast("Invalid file type. Please upload a JPG, JPEG, PNG, or WebP photo.");
+        if (errorEl) {
+            errorEl.textContent = "Please upload a valid image file (JPG, JPEG, PNG, or WebP).";
+            errorEl.classList.remove("hidden");
+        }
+        input.value = "";
+        return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+        showToast("Image size exceeds 5MB limit. Please choose a smaller photo.");
+        if (errorEl) {
+            errorEl.textContent = "Image size exceeds 5MB limit. Please choose a smaller photo.";
+            errorEl.classList.remove("hidden");
+        }
+        input.value = "";
+        return;
+    }
+
+    try {
+        const compressed = await compressImageFile(file);
+        uploadedImageBase64 = compressed;
+
+        const previewImg = document.getElementById("imagePreview");
+        const container = document.getElementById("imagePreviewContainer");
+        const reqBadge = document.getElementById("foodImageRequirementBadge");
+
+        if (previewImg) previewImg.src = compressed;
+        if (container) container.classList.remove("hidden");
+        if (reqBadge) {
+            reqBadge.className = "status accepted";
+            reqBadge.textContent = "Photo Attached ✅";
+        }
+
+        showToast("📸 Food photo attached! Ready for submission.");
+    } catch (err) {
+        console.error("Image processing error:", err);
+        showToast("Could not process the selected image.");
+    }
 }
 
 function removeImage() {
     uploadedImageBase64 = null;
 
-    const input = document.getElementById("foodImage");
+    const camInput = document.getElementById("foodCameraInput");
+    const galInput = document.getElementById("foodGalleryInput");
     const previewContainer = document.getElementById("imagePreviewContainer");
     const previewImg = document.getElementById("imagePreview");
     const reqBadge = document.getElementById("foodImageRequirementBadge");
     const errorEl = document.getElementById("foodImageError");
 
-    if (input) input.value = "";
-    if (previewImg) {
-        previewImg.src = "";
-        previewImg.className = "food-preview";
-    }
+    if (camInput) camInput.value = "";
+    if (galInput) galInput.value = "";
+    if (previewImg) previewImg.src = "";
     if (previewContainer) previewContainer.classList.add("hidden");
     if (errorEl) errorEl.classList.add("hidden");
     if (reqBadge) {
         reqBadge.className = "status pending";
-        reqBadge.textContent = "Required";
+        reqBadge.textContent = "Photo Required";
     }
 }
 
-async function triggerAIVisionAnalysis() {
-    if (!uploadedImageBase64) {
-        showToast("Please select or upload a food photo first. 📸");
-        const input = document.getElementById("foodImage");
-        if (input) input.click();
-        return;
-    }
 
-    isAnalyzingImage = true;
-    const btn = document.getElementById("btnAnalyzeAI");
-    const originalText = btn ? btn.innerHTML : "";
-    if (btn) {
-        btn.disabled = true;
-        btn.innerHTML = `⏳ Inspecting with Real AI...`;
-    }
+/* ================= AI FOOD PRIORITISATION (TEXT METADATA ONLY, NO IMAGES) ================= */
 
-    const previewImg = document.getElementById("imagePreview");
-    const overlay = document.getElementById("imageVerificationOverlay");
-    const alertEl = document.getElementById("aiRejectionAlert");
-    const reqBadge = document.getElementById("foodImageRequirementBadge");
+let aiProviderStatus = null;
 
-    if (alertEl) alertEl.classList.add("hidden");
-    if (previewImg) previewImg.className = "food-preview verifying";
-    if (overlay) {
-        overlay.className = "image-verification-overlay verifying";
-        overlay.innerHTML = "🔄 Real AI inspecting food...";
-        overlay.classList.remove("hidden");
+async function checkAIStatus() {
+    try {
+        aiProviderStatus = await API.get("/ai/status");
+    } catch {
+        aiProviderStatus = { hasKey: false, model: "Deterministic Rule Engine" };
     }
-    if (reqBadge) {
-        reqBadge.className = "status pending";
-        reqBadge.textContent = "AI Verifying...";
-    }
+}
 
-    const card = document.getElementById("aiAnalysisCard");
-    const resultsEl = document.getElementById("aiAnalysisResults");
-    const freshnessBadge = document.getElementById("aiFreshnessBadge");
-    const modelBadge = document.getElementById("aiModelBadge");
+async function requestAIPriorityExplanation() {
+    const foodName = document.getElementById("foodName")?.value?.trim();
+    const foodType = document.getElementById("foodType")?.value;
+    const quantity = document.getElementById("foodQuantity")?.value;
+    const expiryDate = document.getElementById("expiryDate")?.value?.trim();
+    const preparedDate = document.getElementById("preparedDate")?.value?.trim();
 
-    if (card) card.classList.remove("hidden");
-    if (resultsEl) {
-        resultsEl.innerHTML = `
-            <div style="display:flex;align-items:center;gap:10px;padding:8px 0;color:var(--muted);">
-                <span style="font-size:20px;">🔄</span>
-                <span>Inspecting food image with Groq Llama 3.2 Vision model...</span>
-            </div>
-        `;
-    }
+    if (!expiryDate) return;
 
     try {
-        showToast("Inspecting photo with Groq Vision AI... ⚡");
-        const analysis = await API.post("/ai/analyze-image", { image: uploadedImageBase64 });
-        latestAISuggestions = analysis;
+        // Send ONLY text metadata — NEVER send photographs or image URLs
+        const res = await API.post("/ai/priority-explanation", {
+            foodName,
+            foodType,
+            quantity: quantity ? Number(quantity) : null,
+            expiryDate,
+            preparedDate
+        });
 
-        // -------------------------------------------------------------
-        // NON-FOOD DETECTION ADVISORY (Optional Notice, not blocking)
-        // -------------------------------------------------------------
-        if (!analysis.isFood) {
-            lastAIVerifiedStatus = { isFood: false, isSafeForDonation: false };
-
-            if (previewImg) previewImg.className = "food-preview";
-            if (overlay) {
-                overlay.className = "image-verification-overlay rejected";
-                overlay.innerHTML = "💡 Advisory: Might not be food";
-                overlay.classList.remove("hidden");
-            }
-            if (reqBadge) {
-                reqBadge.className = "status";
-                reqBadge.textContent = "Photo Attached (Advisory)";
-            }
-
-            const msgEl = document.getElementById("aiRejectionMessage");
-            const badgeEl = document.getElementById("aiRejectionBadge");
-            if (msgEl) {
-                msgEl.textContent = analysis.rejectionReason || "AI did not clearly recognize food in this image. You can upload a clearer photo or keep it and continue with your donation.";
-            }
-            if (badgeEl) {
-                badgeEl.textContent = "Advisory (Optional)";
-            }
-            if (alertEl) {
-                alertEl.classList.remove("hidden");
-                alertEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
-            }
-            if (card) card.classList.add("hidden");
-
-            showToast("💡 AI Advisory: Image may not depict food (submission is still allowed).");
-            return;
+        const descEl = document.getElementById("aiPriorityDescription");
+        if (descEl && res.explanation) {
+            descEl.textContent = res.explanation;
         }
-
-        // -------------------------------------------------------------
-        // FOOD SAFETY / SPOILAGE ADVISORY
-        // -------------------------------------------------------------
-        if (analysis.isFood && !analysis.isSafeForDonation) {
-            lastAIVerifiedStatus = { isFood: true, isSafeForDonation: false };
-
-            if (previewImg) previewImg.className = "food-preview";
-            if (overlay) {
-                overlay.className = "image-verification-overlay rejected";
-                overlay.innerHTML = "⚠️ Freshness Concern Flagged";
-                overlay.classList.remove("hidden");
-            }
-            if (reqBadge) {
-                reqBadge.className = "status pending";
-                reqBadge.textContent = "Freshness Concern";
-            }
-
-            const msgEl = document.getElementById("aiRejectionMessage");
-            const badgeEl = document.getElementById("aiRejectionBadge");
-            if (msgEl) {
-                msgEl.textContent = analysis.safetyWarning || analysis.rejectionReason || "AI noticed potential freshness issues. Please ensure the food is fresh and safe before submitting.";
-            }
-            if (badgeEl) {
-                badgeEl.textContent = "Safety Advisory";
-            }
-            if (alertEl) {
-                alertEl.classList.remove("hidden");
-                alertEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
-            }
-            if (card) card.classList.add("hidden");
-
-            showToast("⚠️ AI Warning: Freshness concern flagged (submission is still allowed).");
-            return;
-        }
-
-        // -------------------------------------------------------------
-        // VERIFIED REAL & SAFE FOOD
-        // -------------------------------------------------------------
-        lastAIVerifiedStatus = { isFood: true, isSafeForDonation: true, foodName: analysis.foodName };
-
-        if (previewImg) previewImg.className = "food-preview verified";
-        if (overlay) {
-            overlay.className = "image-verification-overlay verified";
-            overlay.innerHTML = `✅ AI Recognized: ${escapeHTML(analysis.foodName || 'Food Detected')}`;
-            overlay.classList.remove("hidden");
-        }
-        if (reqBadge) {
-            reqBadge.className = "status accepted";
-            reqBadge.textContent = "✅ AI Analyzed";
-        }
-        if (alertEl) alertEl.classList.add("hidden");
-
-        if (modelBadge) {
-            modelBadge.textContent = analysis.aiProvider || "Groq Multimodal Vision AI";
-        }
-
-        if (freshnessBadge) {
-            freshnessBadge.textContent = analysis.visualFreshness || "Fresh";
-            freshnessBadge.className = "status accepted";
-        }
-
-        if (resultsEl) {
-            resultsEl.innerHTML = `
-                <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:8px;margin-bottom:10px;">
-                    <div><strong>🍽️ Detected Dish:</strong> ${escapeHTML(analysis.foodName)}</div>
-                    <div><strong>📦 Category:</strong> ${escapeHTML(analysis.foodType)}</div>
-                    <div><strong>⚖️ Est. Quantity:</strong> ${analysis.estimatedQuantityKg} kg (~${Math.round(analysis.estimatedQuantityKg * 4)} meals)</div>
-                    <div><strong>🛡️ Safe for Donation:</strong> <span style="color:var(--green);font-weight:700;">✅ Fresh & Safe</span></div>
-                    <div><strong>⚡ Urgency Priority:</strong> <span class="priority-text-${(analysis.priority || 'medium').toLowerCase()}">${analysis.priority}</span></div>
-                    <div><strong>📅 Shelf-life estimate:</strong> ~${analysis.suggestedExpiryDays || 2} days</div>
-                </div>
-                <div style="background:rgba(255,255,255,0.8);padding:8px 12px;border-radius:8px;border-left:3px solid var(--green);">
-                    <strong>AI Visual Inspection Notes:</strong> ${escapeHTML(analysis.description)}
-                </div>
-            `;
-        }
-
-        showToast(`✅ Food Identified: "${analysis.foodName}"! Click 'Auto-Fill Form' to apply AI suggestions. ✨`);
-    } catch (err) {
-        console.error("AI analysis error:", err);
-        const errMsg = err.message || "";
-
-        if (previewImg) previewImg.className = "food-preview";
-
-        if (errMsg.includes("API_KEY") || errMsg.includes("Key Required") || errMsg.includes("API key")) {
-            showToast("ℹ️ Groq API key is not configured in .env. AI analysis is optional — you can still submit!");
-            if (overlay) {
-                overlay.className = "image-verification-overlay";
-                overlay.style.background = "rgba(75, 85, 99, 0.85)";
-                overlay.innerHTML = "ℹ️ AI Optional (No Groq Key)";
-                overlay.classList.remove("hidden");
-            }
-            if (reqBadge) {
-                reqBadge.className = "status";
-                reqBadge.textContent = "Photo Attached";
-            }
-        } else {
-            showToast("ℹ️ AI analysis skipped (" + errMsg + "). You can still submit your donation!");
-            if (overlay) {
-                overlay.className = "image-verification-overlay";
-                overlay.style.background = "rgba(75, 85, 99, 0.85)";
-                overlay.innerHTML = "ℹ️ AI Skipped";
-                overlay.classList.remove("hidden");
-            }
-            if (reqBadge) {
-                reqBadge.className = "status";
-                reqBadge.textContent = "Photo Attached";
-            }
-        }
-
-        if (resultsEl) {
-            resultsEl.innerHTML = `<span style="color:var(--muted)">AI inspection unavailable: ${escapeHTML(errMsg)}. <strong>AI analysis is optional</strong> — you can complete the form and submit your donation directly.</span>`;
-        }
-    } finally {
-        isAnalyzingImage = false;
-        if (btn) {
-            btn.disabled = false;
-            btn.innerHTML = originalText || `✨ Analyze Food with AI (Optional)`;
-        }
+    } catch {
+        // Keep deterministic preview description if AI service is unavailable
     }
-}
-
-function applyAISuggestions() {
-    if (!latestAISuggestions) {
-        showToast("No AI analysis available. Please upload an image first.");
-        return;
-    }
-
-    const { foodName, foodType, estimatedQuantityKg, description, suggestedExpiryDays } = latestAISuggestions;
-
-    if (foodName) {
-        const el = document.getElementById("foodName");
-        if (el) el.value = foodName;
-    }
-
-    if (foodType) {
-        const el = document.getElementById("foodType");
-        if (el) {
-            for (let i = 0; i < el.options.length; i++) {
-                if (el.options[i].value.toLowerCase() === foodType.toLowerCase() ||
-                    foodType.toLowerCase().includes(el.options[i].value.toLowerCase())) {
-                    el.selectedIndex = i;
-                    break;
-                }
-            }
-        }
-    }
-
-    if (estimatedQuantityKg) {
-        const el = document.getElementById("foodQuantity");
-        if (el) el.value = estimatedQuantityKg;
-    }
-
-    if (description) {
-        const el = document.getElementById("foodDescription");
-        if (el) el.value = description;
-    }
-
-    const today = new Date();
-    const todayStr = today.toISOString().split("T")[0];
-    const prepEl = document.getElementById("preparedDate");
-    if (prepEl) prepEl.value = todayStr;
-
-    const daysToAdd = suggestedExpiryDays || 2;
-    const expiry = new Date(today);
-    expiry.setDate(expiry.getDate() + daysToAdd);
-    const expStr = expiry.toISOString().split("T")[0];
-    const expEl = document.getElementById("expiryDate");
-    if (expEl) expEl.value = expStr;
-
-    updatePriorityPreview();
-
-    showToast("Form auto-filled from Real AI analysis! 🪄");
 }
 
 function getDefaultFoodImage(type) {

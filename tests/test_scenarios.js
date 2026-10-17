@@ -14,7 +14,7 @@ console.log('  🧪 Running ShareBite Automated Test Suite');
 console.log('====================================================\n');
 
 let passedTests = 0;
-let totalTests = 14;
+let totalTests = 15;
 
 // Sample valid test image (1x1 transparent PNG data URL)
 const SAMPLE_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
@@ -222,7 +222,7 @@ try {
             pickupLocation: 'Downtown',
             image: ''
         }, testDonor);
-    }, /Food photo is required/i);
+    }, /Please upload a photo of the food before listing it|Food photo is required/i);
     console.log('✅ TEST 9 PASSED: No food image selected -> Submission rejected.');
     passedTests++;
 } catch (err) {
@@ -414,6 +414,60 @@ try {
 } catch (err) {
     console.error('❌ TEST 14 FAILED:', err.message);
 }
+
+// ----------------------------------------------------
+// TEST 15: Food that has expired is automatically deleted from the database
+// ----------------------------------------------------
+try {
+    // 1. Create a donation that expires today
+    const expirableDonation = db.createDonation({
+        foodName: 'Perishable Milk Pack',
+        foodType: 'Dairy Products',
+        quantity: 4,
+        preparedDate: todayStr,
+        expiryDate: todayStr,
+        pickupLocation: 'Cold Storage Room 2',
+        image: SAMPLE_IMAGE
+    }, testDonor);
+
+    // Verify it exists in database while active today
+    const activeInList = db.getDonations({ status: 'Available' });
+    assert(activeInList.some(d => d.id === expirableDonation.id), 'Active donation must exist today');
+
+    // 2. Simulate tomorrow: donation has expired
+    const tomorrowDate = new Date(today);
+    tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+
+    // Run purge for tomorrow
+    const purgeResult = db.purgeExpiredDonations(tomorrowDate);
+    assert(purgeResult.deletedIds.includes(expirableDonation.id), 'Expired donation ID must be among purged IDs');
+
+    // 3. Verify it is completely removed from the database
+    const foundInDb = db.getDonationById(expirableDonation.id);
+    assert.strictEqual(foundInDb, null, 'Expired donation must be automatically deleted from the database');
+
+    const availableAfter = db.getDonations({ status: 'Available' });
+    assert(!availableAfter.some(d => d.id === expirableDonation.id), 'Purged donation must not appear anywhere');
+
+    // 4. Verify donor received automated notification about food expiry and removal
+    const notifs = db.getNotifications(testDonor.email, 'donor');
+    const autoDeleteNotif = notifs.find(n => n.title.includes('Food Expired') || n.message.includes('Perishable Milk Pack'));
+    assert(autoDeleteNotif, 'Donor must receive notification when expired food is automatically deleted');
+
+    console.log('✅ TEST 15 PASSED: Food that has expired is automatically deleted from the database.');
+    passedTests++;
+} catch (err) {
+    console.error('❌ TEST 15 FAILED:', err.message);
+}
+
+// Teardown: Clean up temporary test donations created during tests
+try {
+    const { DatabaseSync } = require('node:sqlite');
+    const dbPath = path.join(__dirname, '..', 'foodshare.db');
+    const testDb = new DatabaseSync(dbPath);
+    testDb.prepare("DELETE FROM donations WHERE donor_email = 'donor@foodshare.org';").run();
+    testDb.prepare("DELETE FROM notifications WHERE user_email = 'donor@foodshare.org' AND title != 'Welcome to ShareBite! 🍃';").run();
+} catch (cleanupErr) {}
 
 console.log('\n====================================================');
 console.log(`  🎉 Test Results: ${passedTests}/${totalTests} Tests Passed`);

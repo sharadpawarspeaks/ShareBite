@@ -142,145 +142,120 @@ function getGoogleMapsApiKey() {
     return (key && key.trim()) ? key.trim() : null;
 }
 
-const FOOD_INSPECTION_PROMPT = `You are an expert food safety inspector and donation coordinator for a food rescue and surplus sharing platform.
-Inspect this uploaded image with STRICT SCRUTINY.
+function getMapTilerApiKey() {
+    reloadEnvConfig();
+    const key = process.env.MAPTILER_API_KEY || db.getSetting('maptiler_api_key');
+    return (key && key.trim()) ? key.trim() : null;
+}
 
-STEP 1: MANDATORY FOOD VERIFICATION
-Determine whether this image actually contains GENUINE, EDIBLE FOOD, fresh produce, groceries, raw ingredients, vegetables, fruits, cooked meals, bakery goods, packaged food products, or beverages intended for human consumption.
+// -------------------------------------------------------------
+// AI-Assisted Food Prioritisation (TEXT ONLY - NO IMAGES)
+// -------------------------------------------------------------
+async function generateAIPriorityExplanation({ foodName, foodType, quantity, expiryDate, preparedDate }, apiKey) {
+    // 1. Backend deterministic calculation is the single authoritative source of truth
+    const priorityCalc = dateUtils.calculateFoodPriority(expiryDate);
+    const priority = priorityCalc.priority;
+    const priorityLevel = priorityCalc.priorityLevel || (priority === 'LOW' ? 'NORMAL' : priority);
+    const daysRemaining = priorityCalc.daysRemaining;
 
-NON-FOOD DETECTION (STRICT REJECTION):
-If this image depicts ANYTHING other than edible food:
-- Examples of non-food: humans/faces/selfies, animals/pets, cars, smartphones, computers, screens, electronics, furniture, books, clothing, documents, memes, packaging with NO food inside, empty plates/tables/surfaces, random inanimate household objects, blurry/dark/unintelligible images.
-- If it is NOT food:
-  * Set "isFood": false
-  * Set "rejectionReason": "Clear, informative explanation stating what is visible instead of food and explaining that only genuine food photos are accepted (e.g. 'This image shows a laptop/person/desk and does not contain edible food. Please upload a clear photo of the food you wish to donate.')."
-  * Set "foodName": "Non-food item"
-  * Set "isSafeForDonation": false
-
-STEP 2: FOOD SAFETY AND SPOILAGE INSPECTION (Only if isFood is true)
-Examine the physical condition of the food:
-- If the food is visibly rotten, decaying, decomposed, moldy, infested with insects, contaminated, or unsafe for consumption:
-  * Set "isFood": true
-  * Set "isSafeForDonation": false
-  * Set "safetyWarning": "Spoiled or moldy food detected. To protect recipient health, spoiled food cannot be accepted for donation."
-  * Set "rejectionReason": "Food appears spoiled, contaminated, or unsafe for human consumption."
-- If the food is fresh, wholesome, safe, and edible:
-  * Set "isFood": true
-  * Set "isSafeForDonation": true
-  * Set "safetyWarning": null
-  * Set "rejectionReason": null
-
-STEP 3: CATEGORIZATION AND ESTIMATION (When isFood is true and isSafeForDonation is true)
-- "foodName": A concise, natural name for the food (e.g., 'Fresh Braeburn Apples', 'Vegetable Biryani Rice', 'Artisan Bakery Loaves').
-- "foodType": Exactly one of: 'Cooked Food', 'Packaged Food', 'Fruits', 'Vegetables', 'Bakery Items', 'Dairy Products', 'Other'.
-- "estimatedQuantityKg": Realistic estimate in kilograms (number).
-- "visualFreshness": Exactly one of: 'Fresh', 'Good Condition', 'Perishable - Fast Distribution Needed', 'Questionable / Unsafe'.
-- "priority": Exactly one of: 'High', 'Medium', 'Low'.
-- "suggestedExpiryDays": Estimated days remaining before expiration (integer).
-- "description": 1 to 2 detailed sentences describing visible ingredients, packaging, freshness signs, and food handling recommendations.
-- "confidence": Float between 0.0 and 1.0.
-
-OUTPUT FORMAT:
-Return STRICTLY a valid JSON object matching this schema without any markdown formatting or surrounding explanation:
-{
-  "isFood": true,
-  "rejectionReason": null,
-  "safetyWarning": null,
-  "foodName": "Concise food name",
-  "foodType": "Cooked Food",
-  "estimatedQuantityKg": 5.0,
-  "visualFreshness": "Fresh",
-  "isSafeForDonation": true,
-  "priority": "High",
-  "suggestedExpiryDays": 2,
-  "description": "...",
-  "confidence": 0.95
-}`;
-
-async function analyzeFoodImageWithGroq(imageBase64, apiKey) {
-    const candidateModels = ['llama-3.2-11b-vision-preview', 'llama-3.2-90b-vision-preview'];
-    let lastError = null;
-    const trimmedKey = apiKey.trim();
-
-    let formattedImageUrl = imageBase64;
-    if (!formattedImageUrl.startsWith('data:image/')) {
-        formattedImageUrl = `data:image/jpeg;base64,${formattedImageUrl}`;
+    // 2. Standard deterministic explanation (fallback / offline)
+    let defaultReason = `Food expires on ${dateUtils.formatDateToDisplay(expiryDate)}.`;
+    if (priorityCalc.isExpired) {
+        defaultReason = `Expired: Food has passed its expiration date and is not eligible for distribution.`;
+    } else if (priorityCalc.expiresToday) {
+        defaultReason = `Urgent: Food expires today! Rapid redistribution required to ensure food safety.`;
+    } else if (daysRemaining <= 2) {
+        defaultReason = `High urgency: Food expires in ${daysRemaining} day${daysRemaining === 1 ? '' : 's'}. Immediate collection recommended.`;
+    } else if (daysRemaining <= 5) {
+        defaultReason = `Moderate urgency: Food expires in ${daysRemaining} days. Standard NGO pickup window.`;
+    } else if (priorityCalc.valid) {
+        defaultReason = `Standard window: Food expires in ${daysRemaining} days. Safe collection window available.`;
+    } else {
+        defaultReason = `Verification needed: Missing or invalid expiry information. Please confirm with donor before collection.`;
     }
 
-    for (const model of candidateModels) {
-        try {
-            const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${trimmedKey}`
-                },
-                body: JSON.stringify({
-                    model: model,
-                    response_format: { type: "json_object" },
-                    messages: [
-                        {
-                            role: "user",
-                            content: [
-                                {
-                                    type: "text",
-                                    text: `${FOOD_INSPECTION_PROMPT}\n\nIMPORTANT: Inspect this uploaded food image and respond strictly in valid JSON matching the schema.`
-                                },
-                                {
-                                    type: "image_url",
-                                    image_url: {
-                                        url: formattedImageUrl
-                                    }
-                                }
-                            ]
-                        }
-                    ],
-                    temperature: 0.1,
-                    max_tokens: 800
-                })
-            });
+    // 3. If Groq API key is not configured, return authoritative deterministic explanation
+    const trimmedKey = apiKey ? apiKey.trim() : null;
+    if (!trimmedKey) {
+        return {
+            priority,
+            priorityLevel,
+            daysRemaining,
+            badgeLabel: priorityCalc.badgeLabel,
+            badgeClass: priorityCalc.badgeClass,
+            isExpired: priorityCalc.isExpired,
+            expiresToday: priorityCalc.expiresToday,
+            explanation: defaultReason,
+            provider: 'Deterministic Food Safety Rule Engine'
+        };
+    }
 
-            if (!response.ok) {
-                const errorText = await response.text();
-                lastError = new Error(`Groq API error (${response.status}): ${errorText}`);
-                continue;
-            }
+    // 4. If Groq API key is present, generate a helpful 1-sentence explanation using text model (NEVER images)
+    try {
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${trimmedKey}`
+            },
+            body: JSON.stringify({
+                model: 'llama-3.3-70b-versatile',
+                messages: [
+                    {
+                        role: 'system',
+                        content: 'You are ShareBite\'s AI Food Redistribution Assistant. Your role is solely to provide a concise 1-sentence priority explanation and food-safety handling recommendation for NGOs based ONLY on stated text details. The backend priority is fixed and authoritative. Never contradict the priority. Never invent dates. Never ask for images.'
+                    },
+                    {
+                        role: 'user',
+                        content: `Food: "${foodName || 'Donation'}", Category: "${foodType || 'General'}", Quantity: ${quantity || 1} kg, Expiry Date: "${expiryDate}", Calculated Priority: "${priorityLevel}" (${daysRemaining !== null ? daysRemaining + ' days remaining' : 'unspecified'}). Provide a 1-sentence explanation for NGOs.`
+                    }
+                ],
+                temperature: 0.2,
+                max_tokens: 100
+            })
+        });
 
-            const data = await response.json();
-            const rawContent = data.choices?.[0]?.message?.content;
-            if (!rawContent) {
-                throw new Error('No content returned by Groq Vision model');
-            }
-
-            let cleaned = rawContent.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
-            const firstBrace = cleaned.indexOf('{');
-            const lastBrace = cleaned.lastIndexOf('}');
-            if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-                cleaned = cleaned.substring(firstBrace, lastBrace + 1);
-            }
-
-            const parsed = JSON.parse(cleaned);
+        if (!response.ok) {
             return {
-                isFood: Boolean(parsed.isFood),
-                rejectionReason: parsed.rejectionReason || null,
-                safetyWarning: parsed.safetyWarning || null,
-                foodName: parsed.foodName || (parsed.isFood ? 'Donated Food Item' : 'Non-Food Item'),
-                foodType: parsed.foodType || 'Cooked Food',
-                estimatedQuantityKg: Number(parsed.estimatedQuantityKg) || 1.0,
-                visualFreshness: parsed.visualFreshness || 'Fresh',
-                isSafeForDonation: Boolean(parsed.isSafeForDonation),
-                priority: parsed.priority || 'Medium',
-                suggestedExpiryDays: Number(parsed.suggestedExpiryDays) || 2,
-                description: parsed.description || '',
-                confidence: Number(parsed.confidence) || 0.95,
-                activeModel: model
+                priority,
+                priorityLevel,
+                daysRemaining,
+                badgeLabel: priorityCalc.badgeLabel,
+                badgeClass: priorityCalc.badgeClass,
+                isExpired: priorityCalc.isExpired,
+                expiresToday: priorityCalc.expiresToday,
+                explanation: defaultReason,
+                provider: 'Deterministic Food Safety Rule Engine (Groq fallback)'
             };
-        } catch (err) {
-            lastError = err;
         }
-    }
 
-    throw lastError || new Error('Failed to analyze food image with Groq Vision AI');
+        const data = await response.json();
+        const aiText = data.choices?.[0]?.message?.content?.trim();
+
+        return {
+            priority,
+            priorityLevel,
+            daysRemaining,
+            badgeLabel: priorityCalc.badgeLabel,
+            badgeClass: priorityCalc.badgeClass,
+            isExpired: priorityCalc.isExpired,
+            expiresToday: priorityCalc.expiresToday,
+            explanation: aiText || defaultReason,
+            provider: 'Groq Llama 3 AI (Text Prioritisation)'
+        };
+    } catch (err) {
+        return {
+            priority,
+            priorityLevel,
+            daysRemaining,
+            badgeLabel: priorityCalc.badgeLabel,
+            badgeClass: priorityCalc.badgeClass,
+            isExpired: priorityCalc.isExpired,
+            expiresToday: priorityCalc.expiresToday,
+            explanation: defaultReason,
+            provider: 'Deterministic Food Safety Rule Engine (Offline)'
+        };
+    }
 }
 
 // -------------------------------------------------------------
@@ -745,6 +720,17 @@ async function requestHandler(req, res) {
                 }
             }
 
+            // POST /api/donations/purge-expired (Trigger automatic deletion of expired food)
+            if (pathname === '/api/donations/purge-expired' && method === 'POST') {
+                const result = db.purgeExpiredDonations();
+                return sendJson(res, 200, {
+                    success: true,
+                    message: `Purged ${result.deletedCount} expired food listing(s) from database.`,
+                    deletedCount: result.deletedCount,
+                    deletedIds: result.deletedIds
+                });
+            }
+
             // GET /api/notifications
             if (pathname === '/api/notifications' && method === 'GET') {
                 const user = getAuthUser(req);
@@ -766,14 +752,15 @@ async function requestHandler(req, res) {
             }
 
             // GET /api/ai/status
+            // GET /api/ai/status (Fetch status of AI prioritisation assistant)
             if (pathname === '/api/ai/status' && method === 'GET') {
                 const groqKey = getGroqApiKey();
                 if (groqKey) {
                     return sendJson(res, 200, {
                         hasKey: true,
                         type: 'groq',
-                        model: 'llama-3.2-11b-vision-preview',
-                        provider: 'Groq Llama 3.2 Vision AI (Active 🟢)',
+                        model: 'llama-3.3-70b-versatile',
+                        provider: 'Groq Llama 3 AI (Text Prioritisation Active 🟢)',
                         keyPreview: `${groqKey.slice(0, 7)}...${groqKey.slice(-4)}`
                     });
                 }
@@ -781,8 +768,8 @@ async function requestHandler(req, res) {
                 return sendJson(res, 200, {
                     hasKey: false,
                     type: 'none',
-                    model: 'llama-3.2-11b-vision-preview',
-                    provider: 'Groq Vision AI (Key Required 🔑)',
+                    model: 'Deterministic Rule Engine',
+                    provider: 'Deterministic Rule Engine (Groq Key Optional)',
                     keyPreview: null
                 });
             }
@@ -798,7 +785,7 @@ async function requestHandler(req, res) {
                 db.setSetting('groq_api_key', cleanedKey);
                 return sendJson(res, 200, {
                     success: true,
-                    message: 'Groq Vision AI key saved & activated! 🚀',
+                    message: 'Groq AI key saved for text prioritisation! 🚀',
                     keyPreview: `${cleanedKey.slice(0, 7)}...${cleanedKey.slice(-4)}`
                 });
             }
@@ -809,7 +796,35 @@ async function requestHandler(req, res) {
                 return sendJson(res, 200, { success: true, message: 'Groq API key cleared.' });
             }
 
-            // GET /api/config/maps (Fetch configured Google Maps API key)
+            // GET /api/map-config (Fetch configured map service: MapTiler primary, Google Maps fallback)
+            if (pathname === '/api/map-config' && method === 'GET') {
+                const maptilerKey = getMapTilerApiKey();
+                const googleKey = getGoogleMapsApiKey();
+                const provider = maptilerKey ? 'maptiler' : (googleKey ? 'google' : 'osm');
+                return sendJson(res, 200, {
+                    provider,
+                    maptilerKey: maptilerKey || null,
+                    googleMapsKey: googleKey || null,
+                    hasKey: Boolean(maptilerKey || googleKey)
+                });
+            }
+
+            // POST /api/map-config (Save map configuration)
+            if (pathname === '/api/map-config' && method === 'POST') {
+                const body = await readJsonBody(req);
+                const { maptilerKey, googleMapsKey } = body;
+                if (maptilerKey && typeof maptilerKey === 'string') {
+                    db.setSetting('maptiler_api_key', maptilerKey.trim());
+                    process.env.MAPTILER_API_KEY = maptilerKey.trim();
+                }
+                if (googleMapsKey && typeof googleMapsKey === 'string') {
+                    db.setSetting('google_maps_api_key', googleMapsKey.trim());
+                    process.env.GOOGLE_MAPS_API_KEY = googleMapsKey.trim();
+                }
+                return sendJson(res, 200, { success: true, message: 'Map credentials updated.' });
+            }
+
+            // GET /api/config/maps (Backwards compatibility for Google Maps key)
             if (pathname === '/api/config/maps' && method === 'GET') {
                 const mapsKey = getGoogleMapsApiKey();
                 return sendJson(res, 200, {
@@ -819,7 +834,7 @@ async function requestHandler(req, res) {
                 });
             }
 
-            // POST /api/config/maps (Save Google Maps API key)
+            // POST /api/config/maps (Backwards compatibility for Google Maps key)
             if (pathname === '/api/config/maps' && method === 'POST') {
                 const body = await readJsonBody(req);
                 const { apiKey } = body;
@@ -829,16 +844,6 @@ async function requestHandler(req, res) {
                 const cleanedKey = apiKey.trim();
                 process.env.GOOGLE_MAPS_API_KEY = cleanedKey;
                 db.setSetting('google_maps_api_key', cleanedKey);
-                try {
-                    const envPath = path.join(__dirname, '.env');
-                    let content = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
-                    if (content.includes('GOOGLE_MAPS_API_KEY=')) {
-                        content = content.replace(/GOOGLE_MAPS_API_KEY=.*/, `GOOGLE_MAPS_API_KEY="${cleanedKey}"`);
-                    } else {
-                        content += `\nGOOGLE_MAPS_API_KEY="${cleanedKey}"\n`;
-                    }
-                    fs.writeFileSync(envPath, content, 'utf8');
-                } catch {}
                 return sendJson(res, 200, {
                     success: true,
                     message: 'Google Maps API key saved! 🗺️',
@@ -846,31 +851,35 @@ async function requestHandler(req, res) {
                 });
             }
 
-            // POST /api/ai/analyze-image (Real AI Food Vision Inspection via Groq)
-            if (pathname === '/api/ai/analyze-image' && method === 'POST') {
+            // POST /api/ai/priority-explanation (AI Used ONLY for Food Prioritisation - Text Only)
+            if (pathname === '/api/ai/priority-explanation' && method === 'POST') {
                 const body = await readJsonBody(req);
-                const { image, apiKey: directKey } = body;
+                const { foodName, foodType, quantity, expiryDate, preparedDate } = body;
 
-                if (!image || typeof image !== 'string' || !image.startsWith('data:image/')) {
-                    return sendError(res, 400, 'Valid image data is required for AI inspection.');
+                if (!expiryDate || typeof expiryDate !== 'string') {
+                    return sendError(res, 400, 'Expiry date is required for priority calculation.');
                 }
 
-                const apiKey = (directKey && typeof directKey === 'string' && directKey.trim()) || getGroqApiKey();
-
-                if (!apiKey) {
-                    return sendError(res, 400, 'API_KEY_REQUIRED: Real AI Vision requires a Groq API key. Please add your GROQ_API_KEY in the .env file.');
+                // Strictly prohibit any image data from being sent to AI
+                if (body.image || body.photo || body.imageBase64) {
+                    return sendError(res, 400, 'Food images must never be sent to the AI service. AI is strictly reserved for text prioritisation.');
                 }
 
-                try {
-                    const analysis = await analyzeFoodImageWithGroq(image, apiKey);
-                    return sendJson(res, 200, {
-                        ...analysis,
-                        aiProvider: `Groq Vision AI (${analysis.activeModel || 'llama-3.2-11b-vision-preview'})`
-                    });
-                } catch (groqErr) {
-                    console.error('Groq Vision inspection failed:', groqErr.message);
-                    return sendError(res, 502, 'Groq Vision AI Error: ' + groqErr.message);
-                }
+                const apiKey = getGroqApiKey();
+                const result = await generateAIPriorityExplanation({
+                    foodName: foodName ? String(foodName).trim() : 'Food Listing',
+                    foodType: foodType || 'General',
+                    quantity: Number(quantity) || 1,
+                    expiryDate,
+                    preparedDate
+                }, apiKey);
+
+                return sendJson(res, 200, result);
+            }
+
+            // POST /api/ai/analyze-image (Obsolete Vision endpoint - safely disabled)
+            if (pathname === '/api/ai/analyze-image' && method === 'POST') {
+                return sendError(res, 400, 'Image analysis is disabled. Under ShareBite food safety rules, AI is used strictly for food prioritisation and expiry urgency, never image inspection.');
             }
 
             // POST /api/reset-demo or /api/reset-data
@@ -972,6 +981,23 @@ function startServer(port) {
 
 if (!process.env.VERCEL) {
     startServer(PORT);
+}
+
+// Automatically purge expired food donations every 60 seconds
+const EXPIRED_FOOD_PURGE_INTERVAL_MS = 60 * 1000;
+const purgeTimer = setInterval(() => {
+    try {
+        const result = db.purgeExpiredDonations();
+        if (result && result.deletedCount > 0) {
+            console.log(`[Auto-Delete] Periodically purged ${result.deletedCount} expired donation(s) from database.`);
+        }
+    } catch (err) {
+        console.error('Scheduled purge error:', err.message);
+    }
+}, EXPIRED_FOOD_PURGE_INTERVAL_MS);
+
+if (purgeTimer.unref) {
+    purgeTimer.unref();
 }
 
 module.exports = requestHandler;

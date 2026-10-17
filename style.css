@@ -3369,4 +3369,81 @@ body.dark .fp-success-icon {
     color: #34d399;
 }
 
+/* Upload Option Cards */
+.upload-option-card {
+    transition: all 0.2s ease;
+    border: 2px dashed var(--border) !important;
+}
+.upload-option-card:hover {
+    border-color: var(--green) !important;
+    background: rgba(45, 106, 79, 0.05) !important;
+    transform: translateY(-2px);
+}
+body.dark .upload-option-card {
+    background: #1e293b !important;
+    border-color: #334155 !important;
+}
+body.dark .upload-option-card:hover {
+    border-color: #10b981 !important;
+    background: rgba(16, 185, 129, 0.1) !important;
+}
+
+/* Priority Badge: Needs Review */
+.priority-badge.needs-review {
+    background: #fef3c7;
+    color: #b45309;
+    border: 1px solid #fcd34d;
+}
+body.dark .priority-badge.needs-review {
+    background: rgba(245, 158, 11, 0.2);
+    color: #fbbf24;
+    border-color: #f59e0b;
+}
+
+/* Leaflet Map popup custom styling */
+.leaflet-popup-content-wrapper {
+    border-radius: 12px !important;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15) !important;
+    padding: 2px !important;
+}
+.map-popup-card {
+    font-family: inherit;
+    min-width: 200px;
+    max-width: 260px;
+}
+.map-popup-card img {
+    width: 100%;
+    height: 110px;
+    object-fit: cover;
+    border-radius: 8px 8px 4px 4px;
+    margin-bottom: 6px;
+    display: block;
+}
+.map-popup-card h4 {
+    margin: 4px 0 2px 0;
+    font-size: 14px;
+    font-weight: 700;
+    color: #0f172a;
+}
+.map-popup-card .popup-meta {
+    font-size: 11px;
+    color: #64748b;
+    margin-bottom: 6px;
+    display: flex;
+    justify-content: space-between;
+}
+.map-popup-card .popup-btn {
+    width: 100%;
+    margin-top: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--green, #2d6a4f);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+
 

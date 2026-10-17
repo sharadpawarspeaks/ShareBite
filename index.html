@@ -15,6 +15,9 @@
         rel="stylesheet">
 
     <link rel="stylesheet" href="style.css">
+    <!-- Leaflet Map Library for MapTiler / OpenStreetMap map support -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 </head>
 
 <body>
@@ -577,7 +580,7 @@
                                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:6px;">
                                     <label for="pickupLocation" style="margin:0;display:flex;align-items:center;gap:6px;">
                                         <span>Pickup Location <span style="color:var(--danger, #dc2626); font-weight:bold;">*</span></span>
-                                        <span id="mapLoadedBadge" class="status accepted hidden" style="font-size:10px;padding:2px 7px;">🗺️ Google Maps Active</span>
+                                        <span id="mapLoadedBadge" class="status accepted" style="font-size:10px;padding:2px 7px;">🗺️ Interactive Map Active</span>
                                     </label>
                                     <button type="button" id="btnDetectLocation" class="small-btn small-btn-secondary" onclick="detectUserLocation()" style="font-size:11px;padding:4px 10px;">
                                         📍 Use Current Location
@@ -588,24 +591,9 @@
                                 <input type="hidden" id="pickupLatitude">
                                 <input type="hidden" id="pickupLongitude">
 
-                                <!-- Interactive Google Map Location Picker -->
+                                <!-- Interactive Map Location Picker (MapTiler / Leaflet) -->
                                 <div id="mapPickerWrapper" class="map-picker-wrapper">
-                                    <div id="googleMapPicker" class="google-map-picker">
-                                        <!-- Shown if Google Maps API key is pending -->
-                                        <div id="mapPickerPlaceholder" class="map-picker-placeholder">
-                                            <span style="font-size:32px;margin-bottom:6px;">🗺️</span>
-                                            <strong style="font-size:14px;color:var(--ink);">Google Map Location Picker</strong>
-                                            <p style="font-size:12px;color:var(--muted);max-width:400px;margin:4px 0 12px 0;line-height:1.4;">
-                                                Paste your <code>GOOGLE_MAPS_API_KEY</code> into <code>.env</code> or enter it below to activate live Places autocomplete and draggable pin picker:
-                                            </p>
-                                            <div style="display:flex;gap:6px;width:100%;max-width:380px;">
-                                                <input type="password" id="inputGoogleMapsKey" placeholder="Paste Google Maps API Key (AIza...)" style="font-size:12px;padding:6px 10px;height:34px;flex:1;">
-                                                <button type="button" class="btn btn-primary" onclick="saveGoogleMapsKeyFromUI()" style="font-size:11px;padding:6px 12px;height:34px;white-space:nowrap;">
-                                                    Save & Load Map
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
+                                    <div id="maptilerMapPicker" style="width:100%;height:270px;background:#f8fafc;position:relative;"></div>
                                     <div id="mapControlsBar" class="map-controls-bar">
                                         <span class="map-status-pill" id="mapStatusText">
                                             📍 Click or drag pin to fine-tune exact pickup spot
@@ -627,45 +615,71 @@
                             </div>
 
 
-                            <div class="form-group full">
+                            <!-- MANDATORY FOOD IMAGE UPLOAD SECTION -->
+                            <div class="form-group full" id="foodImageSection">
 
-                                <label for="foodImage" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-                                    <span>Food Photo <span style="color:var(--danger, #dc2626); font-weight:bold;">*</span></span>
-                                    <span id="foodImageRequirementBadge" class="status pending" style="font-size:10px;padding:2px 8px;">Required</span>
+                                <label style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
+                                    <span style="font-weight:700;font-size:14px;color:var(--ink);">Upload Food Image <span style="color:var(--danger, #dc2626); font-weight:bold;">*</span></span>
+                                    <span id="foodImageRequirementBadge" class="status pending" style="font-size:10px;padding:2px 8px;">Photo Required</span>
                                 </label>
 
-                                <label class="upload-box" id="foodUploadBox">
+                                <!-- Hidden File Inputs -->
+                                <input type="file" id="foodCameraInput" accept="image/*" capture="environment" style="display:none;" onchange="handleImageFileSelected(this)">
+                                <input type="file" id="foodGalleryInput" accept="image/jpeg,image/jpg,image/png,image/webp" style="display:none;" onchange="handleImageFileSelected(this)">
 
-                                    <input type="file" id="foodImage" accept="image/jpeg,image/jpg,image/png,image/webp" required>
+                                <!-- Two Prominent Upload Options -->
+                                <div id="imageUploadOptions" class="image-upload-options" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:12px;">
+                                    <button type="button" class="upload-option-card" onclick="triggerCameraCapture()" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:18px 14px;border:2px dashed var(--border);border-radius:12px;background:var(--card-bg, #ffffff);cursor:pointer;text-align:center;">
+                                        <span style="font-size:30px;margin-bottom:6px;">📷</span>
+                                        <strong style="font-size:14px;color:var(--ink);margin-bottom:3px;">Take Photo</strong>
+                                        <small style="font-size:11px;color:var(--muted);">Capture with device camera</small>
+                                    </button>
 
-                                    <span class="upload-icon">📷</span>
-
-                                    <strong>Upload a food photo (Required)</strong>
-
-                                    <small id="foodImageHelpText">
-                                        JPG, JPEG, PNG or WebP (max 5MB) &bull; Photo required for NGO dashboard display
-                                    </small>
-
-                                </label>
-
-                                <div id="imagePreviewContainer" class="image-preview-container hidden">
-
-                                    <div class="food-preview-wrapper" style="position:relative;display:inline-block;max-width:320px;width:100%;">
-                                        <img id="imagePreview" class="food-preview" alt="Food preview">
-                                    </div>
-
-                                    <div style="margin-top:10px;display:flex;justify-content:center;gap:10px;flex-wrap:wrap;">
-                                        <button type="button" class="btn btn-secondary" onclick="document.getElementById('foodImage').click()" style="font-size:12px;padding:7px 14px;">
-                                            📷 Replace Photo
-                                        </button>
-                                        <button type="button" class="remove-image" onclick="removeImage()">
-                                            🗑️ Remove photo
-                                        </button>
-                                    </div>
-
+                                    <button type="button" class="upload-option-card" onclick="document.getElementById('foodGalleryInput').click()" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:18px 14px;border:2px dashed var(--border);border-radius:12px;background:var(--card-bg, #ffffff);cursor:pointer;text-align:center;">
+                                        <span style="font-size:30px;margin-bottom:6px;">🖼️</span>
+                                        <strong style="font-size:14px;color:var(--ink);margin-bottom:3px;">Choose from Gallery</strong>
+                                        <small style="font-size:11px;color:var(--muted);">JPG, JPEG, PNG, WEBP (max 5MB)</small>
+                                    </button>
                                 </div>
 
-                                <div id="foodImageError" class="hidden" style="color:var(--danger, #dc2626);font-size:12px;margin-top:6px;font-weight:500;"></div>
+                                <!-- Image Preview Container -->
+                                <div id="imagePreviewContainer" class="image-preview-container hidden" style="margin-top:14px;text-align:center;">
+                                    <div style="position:relative;display:inline-block;max-width:320px;width:100%;border-radius:12px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.1);">
+                                        <img id="imagePreview" src="" alt="Food Preview" style="width:100%;height:220px;object-fit:cover;display:block;">
+                                        <div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent, rgba(0,0,0,0.7));padding:8px 12px;display:flex;justify-content:space-between;align-items:center;">
+                                            <span style="color:#ffffff;font-size:11px;font-weight:600;">✓ Food Photo Attached</span>
+                                        </div>
+                                    </div>
+                                    <div style="margin-top:10px;display:flex;justify-content:center;gap:10px;flex-wrap:wrap;">
+                                        <button type="button" class="btn btn-secondary" onclick="triggerCameraCapture()" style="font-size:12px;padding:6px 14px;">
+                                            📷 Retake Photo
+                                        </button>
+                                        <button type="button" class="btn btn-secondary" onclick="document.getElementById('foodGalleryInput').click()" style="font-size:12px;padding:6px 14px;">
+                                            🖼️ Choose Another
+                                        </button>
+                                        <button type="button" class="remove-image" onclick="removeImage()" style="font-size:12px;padding:6px 14px;background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;border-radius:6px;cursor:pointer;">
+                                            🗑️ Remove Photo
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Desktop Webcam Capture Modal -->
+                                <div id="webcamModal" class="modal-overlay hidden">
+                                    <div class="modal-card" style="max-width:480px;text-align:center;">
+                                        <h3 style="margin-top:0;font-size:18px;">📷 Take Food Photo</h3>
+                                        <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">Position the food clearly in the camera frame.</p>
+                                        <div style="position:relative;border-radius:8px;overflow:hidden;background:#000;height:280px;display:flex;align-items:center;justify-content:center;">
+                                            <video id="webcamVideo" autoplay playsinline style="width:100%;height:100%;object-fit:cover;"></video>
+                                            <canvas id="webcamCanvas" style="display:none;"></canvas>
+                                        </div>
+                                        <div style="margin-top:16px;display:flex;gap:10px;justify-content:center;">
+                                            <button type="button" class="btn btn-secondary" onclick="closeWebcamModal()">Cancel</button>
+                                            <button type="button" class="btn btn-primary" onclick="captureWebcamSnapshot()">📸 Snap Photo</button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div id="foodImageError" class="hidden" style="color:var(--danger, #dc2626);font-size:12px;margin-top:8px;font-weight:600;"></div>
 
                             </div>
 
@@ -679,8 +693,8 @@
                             </div>
 
                             <p id="aiPriorityDescription">
-                                Food priority is determined by the expiry date. Donations nearing
-                                expiry are prioritized for urgent redistribution.
+                                Food priority is calculated based on expiry urgency. Donations nearing
+                                expiry are prioritized to ensure rapid redistribution and prevent food waste.
                             </p>
 
                             <div class="priority-result">
@@ -691,11 +705,6 @@
 
                                 <span id="priorityText">
                                     Enter expiry date (DD/MM/YYYY) to calculate priority.
-                                </span>
-
-                            </div>
-
-                        </div>
                                 </span>
 
                             </div>
@@ -1145,6 +1154,11 @@
 
                     </select>
 
+                    <button type="button" id="btnNgoViewToggle" class="small-btn small-btn-secondary" onclick="toggleNgoAvailableView()"
+                        title="Switch between List View and Map View">
+                        🗺️ Map View
+                    </button>
+
                     <button type="button" class="small-btn small-btn-secondary" onclick="refreshData()"
                         title="Fetch latest food donations from database">
                         🔄 Refresh
@@ -1152,6 +1166,18 @@
 
                 </div>
 
+
+                <!-- NGO MAP VIEW (MapTiler / Leaflet) -->
+                <div id="ngoMapWrapper" class="ngo-map-wrapper hidden" style="margin-top:16px;">
+                    <div id="ngoFoodMap" style="width:100%;height:460px;border-radius:12px;border:1.5px solid var(--border);box-shadow:var(--shadow-sm);position:relative;z-index:1;"></div>
+                    <div id="ngoMapEmptyState" class="hidden" style="text-align:center;padding:36px 16px;background:var(--card-bg, #fff);border:1px dashed var(--border);border-radius:12px;margin-top:12px;">
+                        <span style="font-size:36px;display:block;margin-bottom:8px;">📍</span>
+                        <strong style="font-size:15px;color:var(--ink);">No Geographic Food Listings Available</strong>
+                        <p style="font-size:13px;color:var(--muted);max-width:440px;margin:6px auto 0 auto;line-height:1.5;">
+                            No active food listings with geographic coordinates are currently available. Food listings will appear on this interactive map as donors pinpoint their pickup locations.
+                        </p>
+                    </div>
+                </div>
 
                 <div id="ngoAvailableContainer" class="food-list"></div>
 

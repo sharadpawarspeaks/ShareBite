@@ -147,8 +147,8 @@ async function sendPasswordResetEmail({ to, userName, otp, overrideConfig = null
 
     const config = overrideConfig || validateConfig();
 
-    const subject = 'ShareBite - Password Reset OTP';
-    const textContent = `Your ShareBite password reset code is: ${otp}\n\nThis single-use code expires in 5 minutes.\nIf you did not request this, please safely ignore this email.\nNever share this code with anyone.`;
+    const subject = 'ShareBite - Password Reset Verification Code';
+    const textContent = `Your ShareBite password reset verification code is: ${otp}\n\nThis single-use code expires in 5 minutes.\nIf you did not request this, please safely ignore this email.\nNever share this code with anyone.`;
     const htmlContent = buildResetEmailHtml({ userName, otpCode: otp });
 
     // Store in internal test store for test assertions
