@@ -5,7 +5,11 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "test": "node tests/test_scenarios.js"
+  },
+  "engines": {
+    "node": ">=22.x"
   },
   "keywords": ["food-donation", "ngo", "zero-waste", "full-stack", "sqlite"],
   "author": "ShareBite Team",

@@ -554,27 +554,65 @@
 
                             <div class="form-group">
 
-                                <label>Prepared Date *</label>
+                                <label for="preparedDate">Prepared Date <span style="color:var(--danger, #dc2626); font-weight:bold;">*</span></label>
 
-                                <input type="date" id="preparedDate" required>
-
-                            </div>
-
-
-                            <div class="form-group">
-
-                                <label>Best Before / Expiry *</label>
-
-                                <input type="date" id="expiryDate" required>
+                                <input type="text" id="preparedDate" placeholder="DD/MM/YYYY" maxlength="10" autocomplete="off" required>
+                                <small id="preparedDateHelp" style="display:block;margin-top:4px;font-size:11px;color:var(--muted);">Format: DD/MM/YYYY (e.g. 16/10/2026)</small>
 
                             </div>
 
 
                             <div class="form-group">
 
-                                <label>Pickup Location *</label>
+                                <label for="expiryDate">Best Before / Expiry <span style="color:var(--danger, #dc2626); font-weight:bold;">*</span></label>
 
-                                <input type="text" id="pickupLocation" placeholder="Enter pickup location" required>
+                                <input type="text" id="expiryDate" placeholder="DD/MM/YYYY" maxlength="10" autocomplete="off" required>
+                                <small id="expiryDateHelp" style="display:block;margin-top:4px;font-size:11px;color:var(--muted);">Format: DD/MM/YYYY (e.g. 16/10/2026)</small>
+
+                            </div>
+
+
+                            <div class="form-group full">
+
+                                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:6px;">
+                                    <label for="pickupLocation" style="margin:0;display:flex;align-items:center;gap:6px;">
+                                        <span>Pickup Location <span style="color:var(--danger, #dc2626); font-weight:bold;">*</span></span>
+                                        <span id="mapLoadedBadge" class="status accepted hidden" style="font-size:10px;padding:2px 7px;">🗺️ Google Maps Active</span>
+                                    </label>
+                                    <button type="button" id="btnDetectLocation" class="small-btn small-btn-secondary" onclick="detectUserLocation()" style="font-size:11px;padding:4px 10px;">
+                                        📍 Use Current Location
+                                    </button>
+                                </div>
+
+                                <input type="text" id="pickupLocation" placeholder="Search street, landmark, area or pinpoint on map..." required autocomplete="off">
+                                <input type="hidden" id="pickupLatitude">
+                                <input type="hidden" id="pickupLongitude">
+
+                                <!-- Interactive Google Map Location Picker -->
+                                <div id="mapPickerWrapper" class="map-picker-wrapper">
+                                    <div id="googleMapPicker" class="google-map-picker">
+                                        <!-- Shown if Google Maps API key is pending -->
+                                        <div id="mapPickerPlaceholder" class="map-picker-placeholder">
+                                            <span style="font-size:32px;margin-bottom:6px;">🗺️</span>
+                                            <strong style="font-size:14px;color:var(--ink);">Google Map Location Picker</strong>
+                                            <p style="font-size:12px;color:var(--muted);max-width:400px;margin:4px 0 12px 0;line-height:1.4;">
+                                                Paste your <code>GOOGLE_MAPS_API_KEY</code> into <code>.env</code> or enter it below to activate live Places autocomplete and draggable pin picker:
+                                            </p>
+                                            <div style="display:flex;gap:6px;width:100%;max-width:380px;">
+                                                <input type="password" id="inputGoogleMapsKey" placeholder="Paste Google Maps API Key (AIza...)" style="font-size:12px;padding:6px 10px;height:34px;flex:1;">
+                                                <button type="button" class="btn btn-primary" onclick="saveGoogleMapsKeyFromUI()" style="font-size:11px;padding:6px 12px;height:34px;white-space:nowrap;">
+                                                    Save & Load Map
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div id="mapControlsBar" class="map-controls-bar">
+                                        <span class="map-status-pill" id="mapStatusText">
+                                            📍 Click or drag pin to fine-tune exact pickup spot
+                                        </span>
+                                        <span id="mapCoordsText" style="font-size:10px;color:var(--muted);"></span>
+                                    </div>
+                                </div>
 
                             </div>
 
@@ -592,20 +630,20 @@
                             <div class="form-group full">
 
                                 <label for="foodImage" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-                                    <span>Food Image <strong style="color:var(--danger);font-size:12px;">* (Mandatory &bull; AI Verified)</strong></span>
-                                    <span id="foodImageRequirementBadge" class="status pending" style="font-size:10px;padding:2px 8px;">Upload Required</span>
+                                    <span>Food Photo <span style="color:var(--danger, #dc2626); font-weight:bold;">*</span></span>
+                                    <span id="foodImageRequirementBadge" class="status pending" style="font-size:10px;padding:2px 8px;">Required</span>
                                 </label>
 
                                 <label class="upload-box" id="foodUploadBox">
 
-                                    <input type="file" id="foodImage" accept="image/jpeg,image/png,image/webp" required>
+                                    <input type="file" id="foodImage" accept="image/jpeg,image/jpg,image/png,image/webp" required>
 
                                     <span class="upload-icon">📷</span>
 
-                                    <strong>Upload food image <span style="color:var(--danger);">*</span></strong>
+                                    <strong>Upload a food photo (Required)</strong>
 
-                                    <small>
-                                        JPG, PNG or WebP &bull; Real AI Vision automatically verifies genuine food
+                                    <small id="foodImageHelpText">
+                                        JPG, JPEG, PNG or WebP (max 5MB) &bull; Photo required for NGO dashboard display
                                     </small>
 
                                 </label>
@@ -614,70 +652,20 @@
 
                                     <div class="food-preview-wrapper" style="position:relative;display:inline-block;max-width:320px;width:100%;">
                                         <img id="imagePreview" class="food-preview" alt="Food preview">
-                                        <div id="imageVerificationOverlay" class="image-verification-overlay hidden"></div>
                                     </div>
 
                                     <div style="margin-top:10px;display:flex;justify-content:center;gap:10px;flex-wrap:wrap;">
+                                        <button type="button" class="btn btn-secondary" onclick="document.getElementById('foodImage').click()" style="font-size:12px;padding:7px 14px;">
+                                            📷 Replace Photo
+                                        </button>
                                         <button type="button" class="remove-image" onclick="removeImage()">
-                                            🗑️ Remove image
-                                        </button>
-                                        <button type="button" id="btnReanalyzeAI" class="small-btn small-btn-secondary" onclick="triggerAIVisionAnalysis()" style="font-size:11px;">
-                                            🔄 Re-verify with AI
+                                            🗑️ Remove photo
                                         </button>
                                     </div>
 
                                 </div>
 
-                                <!-- ================= AI REJECTION ALERT ================= -->
-                                <div id="aiRejectionAlert" class="ai-rejection-alert hidden"
-                                    style="margin-top:14px;background:#fff5f5;border:1.5px solid #feb2b2;border-radius:12px;padding:16px;color:#9b2c2c;">
-
-                                    <div style="display:flex;align-items:flex-start;gap:12px;">
-                                        <span style="font-size:26px;line-height:1;">🚫</span>
-                                        <div style="flex:1;">
-                                            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
-                                                <strong style="font-size:14px;color:#c53030;">Image Rejected by Real AI</strong>
-                                                <span id="aiRejectionBadge" class="status expired" style="font-size:10px;background:#fed7d7;color:#9b2c2c;">Non-Food Rejected</span>
-                                            </div>
-                                            <p id="aiRejectionMessage" style="margin:6px 0 10px 0;font-size:12px;line-height:1.5;color:#4a5568;">
-                                                This image does not depict edible food or groceries. ShareBite requires a genuine food photo for all donations.
-                                            </p>
-                                            <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                                                <button type="button" class="btn btn-primary" onclick="document.getElementById('foodImage').click()" style="font-size:11px;padding:7px 14px;background:#e53e3e;border-color:#e53e3e;">
-                                                    📷 Upload a Genuine Food Photo
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                </div>
-
-                                <div id="aiAnalysisCard" class="ai-analysis-card hidden"
-                                    style="margin-top:14px;background:var(--mint);border:1px solid #b8dfc8;border-radius:12px;padding:16px;">
-
-                                    <div
-                                        style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
-                                        <strong
-                                            style="color:var(--green-dark);display:flex;align-items:center;gap:6px;font-size:13px;">
-                                            <span>🤖</span> <span id="aiModelBadge">Groq Vision AI (Llama 3.2)</span>
-                                        </strong>
-                                        <span id="aiFreshnessBadge" class="status accepted">Fresh & Safe</span>
-                                    </div>
-
-                                    <div id="aiAnalysisResults"
-                                        style="font-size:12px;line-height:1.6;color:var(--ink);"></div>
-
-                                    <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;">
-                                        <button type="button" class="small-btn" onclick="applyAISuggestions()">
-                                            ✅ Auto-Fill Form with AI Suggestions
-                                        </button>
-                                        <button type="button" class="small-btn small-btn-secondary"
-                                            onclick="document.getElementById('aiAnalysisCard').classList.add('hidden')">
-                                            Dismiss
-                                        </button>
-                                    </div>
-
-                                </div>
+                                <div id="foodImageError" class="hidden" style="color:var(--danger, #dc2626);font-size:12px;margin-top:6px;font-weight:500;"></div>
 
                             </div>
 
@@ -690,10 +678,9 @@
                                 🤖 AI FOOD PRIORITY
                             </div>
 
-                            <p>
-                                After submission, ShareBite can analyze the
-                                food information and estimate its urgency
-                                and donation priority.
+                            <p id="aiPriorityDescription">
+                                Food priority is determined by the expiry date. Donations nearing
+                                expiry are prioritized for urgent redistribution.
                             </p>
 
                             <div class="priority-result">
@@ -703,7 +690,12 @@
                                 </span>
 
                                 <span id="priorityText">
-                                    Complete the form to calculate priority.
+                                    Enter expiry date (DD/MM/YYYY) to calculate priority.
+                                </span>
+
+                            </div>
+
+                        </div>
                                 </span>
 
                             </div>
@@ -1517,7 +1509,7 @@
             <p class="p line">Or With</p>
 
             <div class="flex-row">
-                <button type="button" class="btn google" onclick="socialLogin('Google')">
+                <button type="button" class="btn google" onclick="openGoogleAccountChooser()">
                     <svg xml:space="preserve" style="enable-background:new 0 0 512 512;" viewBox="0 0 512 512" y="0px" x="0px" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns="http://www.w3.org/2000/svg" id="Layer_1" width="20" version="1.1">
                         <path d="M113.47,309.408L95.648,375.94l-65.139,1.378C11.042,341.211,0,299.9,0,256 c0-42.451,10.324-82.483,28.624-117.732h0.014l57.992,10.632l25.404,57.644c-5.317,15.501-8.215,32.141-8.215,49.456 C103.821,274.792,107.225,292.797,113.47,309.408z" style="fill:#FBBB00;"></path>
                         <path d="M507.527,208.176C510.467,223.662,512,239.655,512,256c0,18.328-1.927,36.206-5.598,53.451 c-12.462,58.683-45.025,109.925-90.134,146.187l-0.014-0.014l-73.044-3.727l-10.338-64.535 c29.932-17.554,53.324-45.025,65.646-77.911h-136.89V208.176h138.887L507.527,208.176L507.527,208.176z" style="fill:#518EF8;"></path>
@@ -1526,7 +1518,7 @@
                     </svg>
                     Google 
                 </button>
-                <button type="button" class="btn apple" onclick="socialLogin('Apple')">
+                <button type="button" class="btn apple" onclick="openAppleAccountChooser()">
                     <svg xml:space="preserve" style="enable-background:new 0 0 22.773 22.773;" viewBox="0 0 22.773 22.773" y="0px" x="0px" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns="http://www.w3.org/2000/svg" id="Capa_1" width="20" height="20" version="1.1">
                         <g><g>
                             <path d="M15.769,0c0.053,0,0.106,0,0.162,0c0.13,1.606-0.483,2.806-1.228,3.675c-0.731,0.863-1.732,1.7-3.351,1.573 c-0.108-1.583,0.506-2.694,1.25-3.561C13.292,0.879,14.557,0.16,15.769,0z"></path>
@@ -1540,6 +1532,115 @@
 
         </form>
 
+    </div>
+
+
+    <!-- ================= GOOGLE ACCOUNTS CHOOSER MODAL ================= -->
+    <div id="googleAccountsModal" class="google-account-modal-overlay hidden" onclick="handleModalOverlayClick(event, 'googleAccountsModal')">
+        <div class="google-account-card" onclick="event.stopPropagation()">
+            <div class="google-card-header">
+                <button type="button" class="google-card-close" onclick="closeModal('googleAccountsModal')" aria-label="Close">×</button>
+                <div class="google-logo-wrapper">
+                    <svg width="28" height="28" viewBox="0 0 48 48">
+                        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+                        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+                        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+                        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+                    </svg>
+                </div>
+                <h2>Choose an account</h2>
+                <p>to continue to <strong>ShareBite</strong></p>
+                <div class="google-role-badge-container">
+                    <span id="googleAccountRoleLabel">👤 Food Donor</span>
+                </div>
+            </div>
+
+            <div class="google-accounts-scroll" id="googleAccountsList">
+                <!-- Dynamically populated accounts from device -->
+            </div>
+
+            <div class="google-divider"></div>
+
+            <div class="google-add-row" onclick="toggleGoogleAddForm()">
+                <div class="google-add-icon">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="8" x2="12" y2="16"></line>
+                        <line x1="8" y1="12" x2="16" y2="12"></line>
+                    </svg>
+                </div>
+                <span>Use another account</span>
+            </div>
+
+            <form id="googleAddForm" class="google-add-form" style="display: none;" onsubmit="handleGoogleAddAccount(event)">
+                <input type="text" id="googleNewName" class="google-input-field" placeholder="Full Name (e.g. Sharad Pawar)" required>
+                <input type="email" id="googleNewEmail" class="google-input-field" placeholder="Google Email (e.g. name@gmail.com)" required>
+                <button type="submit" class="google-btn-add">Add & Sign In</button>
+            </form>
+
+            <div class="google-card-footer">
+                To continue, Google will share your name, email address, language preference, and profile picture with ShareBite. See ShareBite's <a href="#how" onclick="closeModal('googleAccountsModal')">Privacy Policy</a> and <a href="#how" onclick="closeModal('googleAccountsModal')">Terms of Service</a>.
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= APPLE ACCOUNTS CHOOSER MODAL ================= -->
+    <div id="appleAccountsModal" class="apple-account-modal-overlay hidden" onclick="handleModalOverlayClick(event, 'appleAccountsModal')">
+        <div class="apple-account-card" onclick="event.stopPropagation()">
+            <div class="apple-card-header">
+                <button type="button" class="apple-card-close" onclick="closeModal('appleAccountsModal')" aria-label="Close">×</button>
+                <div class="apple-logo-badge">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 6.8c.61-.75 1.04-1.8 1.01-2.8-.93.04-2.02.63-2.66 1.38-.56.65-1.06 1.7-1.01 2.72 1.05.08 2.05-.55 2.66-1.3"/>
+                    </svg>
+                </div>
+                <h2>Sign in with Apple</h2>
+                <p>Do you want to sign in to ShareBite with your Apple ID?</p>
+            </div>
+
+            <div class="apple-card-body">
+                <div class="apple-profile-box">
+                    <div class="apple-avatar" id="appleAvatarInitial">S</div>
+                    <div class="apple-profile-info">
+                        <div class="apple-profile-name" id="appleProfileName">Sharad Pawar</div>
+                        <div class="apple-profile-id" id="appleProfileEmail">pawarsharad1203@icloud.com</div>
+                    </div>
+                </div>
+
+                <div class="apple-privacy-section">
+                    <div class="apple-privacy-title">Email Privacy Option</div>
+                    
+                    <label class="apple-radio-item">
+                        <input type="radio" name="appleEmailOpt" value="share" checked onchange="toggleAppleEmailMode()">
+                        <div class="apple-radio-label">
+                            <span class="apple-radio-title">Share My Email</span>
+                            <span class="apple-radio-desc" id="appleShareEmailDesc">pawarsharad1203@gmail.com</span>
+                        </div>
+                    </label>
+
+                    <label class="apple-radio-item">
+                        <input type="radio" name="appleEmailOpt" value="hide" onchange="toggleAppleEmailMode()">
+                        <div class="apple-radio-label">
+                            <span class="apple-radio-title">Hide My Email</span>
+                            <span class="apple-radio-desc" id="appleRelayEmailDesc">sp.7x91@privaterelay.appleid.com (Relays to your inbox)</span>
+                        </div>
+                    </label>
+                </div>
+
+                <div id="appleCustomEmailRow" class="apple-custom-email-row" style="display: none;">
+                    <input type="email" id="appleCustomEmail" class="apple-input-field" placeholder="Enter custom Apple ID email">
+                </div>
+
+                <button type="button" class="apple-btn-continue" id="appleContinueBtn" onclick="confirmAppleSignIn()">
+                    <span>Continue with Apple ID</span>
+                    <span id="appleBiometricIcon"></span>
+                </button>
+
+                <button type="button" class="apple-btn-cancel" onclick="toggleAppleDifferentAccount()">
+                    Use a different Apple ID
+                </button>
+            </div>
+        </div>
     </div>
 
 
@@ -1565,6 +1666,7 @@
     <div id="toastContainer" class="toast-container"></div>
 
 
+    <script src="dateUtils.js"></script>
     <script src="script.js"></script>
 
 </body>

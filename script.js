@@ -71,14 +71,12 @@ document.addEventListener("DOMContentLoaded", async function () {
     setupDonationForm();
     initHeroSlideshow();
 
-    // Priority input reactive listeners
-    ["expiryDate", "foodQuantity", "preparedDate", "foodType"].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) {
-            el.addEventListener("input", updatePriorityPreview);
-            el.addEventListener("change", updatePriorityPreview);
-        }
-    });
+    // Priority input reactive listener (determined SOLELY by expiry date)
+    const expEl = document.getElementById("expiryDate");
+    if (expEl) {
+        expEl.addEventListener("input", updatePriorityPreview);
+        expEl.addEventListener("change", updatePriorityPreview);
+    }
 
     // Close modals on Escape key
     document.addEventListener("keydown", function (e) {
@@ -91,6 +89,7 @@ document.addEventListener("DOMContentLoaded", async function () {
     await syncSessionWithBackend();
     await loadInitialData();
     await checkAIStatus();
+    await initGoogleMaps();
 
     // Setup live auto-refresh (polls server every 4s when window has focus)
     setupLiveSync();
@@ -496,12 +495,352 @@ function switchAuth(mode) {
     }
 }
 
-function socialLogin(provider) {
-    showToast(`Connecting with ${provider}... ⚡`);
-    setTimeout(() => {
-        demoLogin(currentRole);
-    }, 500);
+/* ================= GOOGLE & APPLE DEVICE ACCOUNTS SYSTEM ================= */
+
+function escapeHtml(str) {
+    if (!str) return "";
+    return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
 }
+
+const DEFAULT_DEVICE_ACCOUNTS = [
+    {
+        name: "Sharad Pawar",
+        email: "pawarsharad1203@gmail.com",
+        avatarBg: "#1a73e8",
+        isPrimary: true,
+        deviceBadge: "Device Default"
+    },
+    {
+        name: "Sharad Pawar (Personal)",
+        email: "sharad.pawar@gmail.com",
+        avatarBg: "#0f9d58",
+        isPrimary: false,
+        deviceBadge: "Signed In"
+    },
+    {
+        name: "Sharad Pawar (Community NGO)",
+        email: "pawar.ngo@gmail.com",
+        avatarBg: "#e37400",
+        isPrimary: false,
+        deviceBadge: "Saved"
+    }
+];
+
+function getDeviceAccounts() {
+    try {
+        const stored = localStorage.getItem("foodshareDeviceAccounts");
+        let accounts = stored ? JSON.parse(stored) : [];
+        if (!accounts || !Array.isArray(accounts) || accounts.length === 0) {
+            accounts = [...DEFAULT_DEVICE_ACCOUNTS];
+        }
+
+        // If the user currently typed an email in the auth modal, prioritize it dynamically!
+        const currentTypedEmail = document.getElementById("authEmail")?.value?.trim();
+        if (currentTypedEmail && currentTypedEmail.includes("@")) {
+            const existingIdx = accounts.findIndex(a => a.email.toLowerCase() === currentTypedEmail.toLowerCase());
+            if (existingIdx !== -1) {
+                const [item] = accounts.splice(existingIdx, 1);
+                accounts.unshift(item);
+            } else {
+                const namePart = currentTypedEmail.split("@")[0].replace(/[^a-zA-Z]/g, " ").trim();
+                const formattedName = namePart ? namePart.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ") : "Sharad Pawar";
+                accounts.unshift({
+                    name: formattedName || "Sharad Pawar",
+                    email: currentTypedEmail,
+                    avatarBg: "#1a73e8",
+                    isPrimary: true,
+                    deviceBadge: "Current Input"
+                });
+            }
+        }
+        return accounts;
+    } catch (e) {
+        return DEFAULT_DEVICE_ACCOUNTS;
+    }
+}
+
+function saveDeviceAccounts(accounts) {
+    localStorage.setItem("foodshareDeviceAccounts", JSON.stringify(accounts));
+}
+
+function openGoogleAccountChooser() {
+    closeModal("roleModal");
+    const googleModal = document.getElementById("googleAccountsModal");
+    if (!googleModal) return;
+
+    const roleLabel = document.getElementById("googleAccountRoleLabel");
+    if (roleLabel) {
+        roleLabel.innerHTML = currentRole === "ngo" 
+            ? "🏢 Connecting as NGO / Organization" 
+            : "👤 Connecting as Food Donor";
+    }
+
+    renderGoogleAccountsList();
+    googleModal.classList.remove("hidden");
+}
+
+function renderGoogleAccountsList() {
+    const listEl = document.getElementById("googleAccountsList");
+    if (!listEl) return;
+
+    const accounts = getDeviceAccounts();
+    listEl.innerHTML = "";
+
+    accounts.forEach((acc) => {
+        const row = document.createElement("div");
+        row.className = "google-account-row";
+        const initial = (acc.name || acc.email || "G").charAt(0).toUpperCase();
+        const bg = acc.avatarBg || "#1a73e8";
+
+        row.innerHTML = `
+            <div class="google-account-avatar" style="background: ${bg};">${initial}</div>
+            <div class="google-account-details">
+                <div class="google-account-name-row">
+                    <span class="google-account-name">${escapeHtml(acc.name)}</span>
+                    ${acc.deviceBadge ? `<span class="google-device-tag">${escapeHtml(acc.deviceBadge)}</span>` : ""}
+                </div>
+                <div class="google-account-email">${escapeHtml(acc.email)}</div>
+            </div>
+            ${accounts.length > 1 ? `
+                <button type="button" class="google-account-delete" title="Remove account from device" onclick="deleteGoogleAccount('${encodeURIComponent(acc.email)}', event)">
+                    ×
+                </button>
+            ` : ""}
+        `;
+
+        row.addEventListener("click", () => {
+            selectGoogleAccount(acc);
+        });
+
+        listEl.appendChild(row);
+    });
+}
+
+async function selectGoogleAccount(account) {
+    closeModal("googleAccountsModal");
+    showToast(`Connecting ${account.name} with Google... ⚡`);
+
+    try {
+        const res = await API.post("/auth/social", {
+            provider: "Google",
+            name: account.name,
+            email: account.email,
+            role: currentRole || "donor"
+        });
+
+        currentUser = res.user;
+        authToken = res.token;
+        localStorage.setItem("foodshareCurrentUser", JSON.stringify(currentUser));
+        localStorage.setItem("foodshareToken", authToken);
+
+        // Put chosen account at front of device accounts
+        const accounts = getDeviceAccounts();
+        const existingIdx = accounts.findIndex(a => a.email.toLowerCase() === account.email.toLowerCase());
+        if (existingIdx !== -1) {
+            const [item] = accounts.splice(existingIdx, 1);
+            item.deviceBadge = "Active Account";
+            accounts.unshift(item);
+            saveDeviceAccounts(accounts);
+        }
+
+        renderNavAuth();
+        await loadDonationsFromServer();
+        await loadNotificationsFromServer();
+
+        showToast(`Welcome, ${currentUser.name}! Signed in via Google 🚀`);
+
+        if (currentUser.role === "donor") {
+            showDonorDashboard();
+        } else {
+            showNGODashboard();
+        }
+    } catch (err) {
+        showToast("Google sign in failed: " + err.message);
+    }
+}
+
+function toggleGoogleAddForm() {
+    const form = document.getElementById("googleAddForm");
+    if (!form) return;
+    if (form.style.display === "none") {
+        form.style.display = "flex";
+        document.getElementById("googleNewName")?.focus();
+    } else {
+        form.style.display = "none";
+    }
+}
+
+async function handleGoogleAddAccount(e) {
+    e.preventDefault();
+    const nameInput = document.getElementById("googleNewName");
+    const emailInput = document.getElementById("googleNewEmail");
+    const name = nameInput.value.trim();
+    const email = emailInput.value.trim();
+
+    if (!email || !email.includes("@")) {
+        showToast("Please enter a valid Google email.");
+        return;
+    }
+
+    const accounts = getDeviceAccounts();
+    const colors = ["#1a73e8", "#0f9d58", "#ea4335", "#fbbc04", "#8430ce"];
+    const avatarBg = colors[Math.floor(Math.random() * colors.length)];
+
+    const newAcc = {
+        name: name || email.split("@")[0],
+        email: email,
+        avatarBg: avatarBg,
+        isPrimary: true,
+        deviceBadge: "Saved"
+    };
+
+    const filtered = accounts.filter(a => a.email.toLowerCase() !== email.toLowerCase());
+    filtered.unshift(newAcc);
+    saveDeviceAccounts(filtered);
+
+    nameInput.value = "";
+    emailInput.value = "";
+    toggleGoogleAddForm();
+
+    await selectGoogleAccount(newAcc);
+}
+
+function deleteGoogleAccount(encodedEmail, e) {
+    e.stopPropagation();
+    const email = decodeURIComponent(encodedEmail);
+    let accounts = getDeviceAccounts();
+    accounts = accounts.filter(a => a.email.toLowerCase() !== email.toLowerCase());
+    saveDeviceAccounts(accounts);
+    renderGoogleAccountsList();
+    showToast(`Removed ${email} from device.`);
+}
+
+/* ================= APPLE ACCOUNTS SYSTEM ================= */
+
+let currentAppleEmailMode = "share";
+
+function openAppleAccountChooser() {
+    closeModal("roleModal");
+    const appleModal = document.getElementById("appleAccountsModal");
+    if (!appleModal) return;
+
+    const accounts = getDeviceAccounts();
+    const primary = accounts[0] || { name: "Sharad Pawar", email: "pawarsharad1203@gmail.com" };
+
+    const nameEl = document.getElementById("appleProfileName");
+    const emailEl = document.getElementById("appleProfileEmail");
+    const avatarEl = document.getElementById("appleAvatarInitial");
+    const shareDesc = document.getElementById("appleShareEmailDesc");
+    const relayDesc = document.getElementById("appleRelayEmailDesc");
+
+    if (nameEl) nameEl.textContent = primary.name;
+    if (emailEl) emailEl.textContent = primary.email.replace(/@.+/, "@icloud.com");
+    if (avatarEl) avatarEl.textContent = (primary.name || "S").charAt(0).toUpperCase();
+    if (shareDesc) shareDesc.textContent = primary.email;
+    if (relayDesc) {
+        const prefix = primary.name.toLowerCase().replace(/[^a-z]/g, "").slice(0, 3) || "sp";
+        relayDesc.textContent = `${prefix}.relay91@privaterelay.appleid.com (Relays to ${primary.email})`;
+    }
+
+    appleModal.classList.remove("hidden");
+}
+
+function toggleAppleEmailMode() {
+    const radios = document.getElementsByName("appleEmailOpt");
+    for (const r of radios) {
+        if (r.checked) {
+            currentAppleEmailMode = r.value;
+            break;
+        }
+    }
+}
+
+function toggleAppleDifferentAccount() {
+    const row = document.getElementById("appleCustomEmailRow");
+    if (!row) return;
+    if (row.style.display === "none") {
+        row.style.display = "flex";
+        document.getElementById("appleCustomEmail")?.focus();
+    } else {
+        row.style.display = "none";
+    }
+}
+
+async function confirmAppleSignIn() {
+    const btn = document.getElementById("appleContinueBtn");
+    const customEmailInput = document.getElementById("appleCustomEmail");
+    const accounts = getDeviceAccounts();
+    const primary = accounts[0] || { name: "Sharad Pawar", email: "pawarsharad1203@gmail.com" };
+
+    let finalEmail = primary.email;
+    let finalName = primary.name;
+
+    if (customEmailInput && customEmailInput.value.trim()) {
+        finalEmail = customEmailInput.value.trim();
+        finalName = finalEmail.split("@")[0];
+    } else if (currentAppleEmailMode === "hide") {
+        const prefix = primary.name.toLowerCase().replace(/[^a-z]/g, "").slice(0, 3) || "sp";
+        finalEmail = `${prefix}.relay91@privaterelay.appleid.com`;
+    }
+
+    if (btn) {
+        btn.innerHTML = `<span>Verifying Touch ID / Passcode...</span> <span>⏳</span>`;
+        btn.disabled = true;
+    }
+
+    setTimeout(async () => {
+        closeModal("appleAccountsModal");
+        if (btn) {
+            btn.innerHTML = `<span>Continue with Apple ID</span> <span id="appleBiometricIcon"></span>`;
+            btn.disabled = false;
+        }
+
+        try {
+            const res = await API.post("/auth/social", {
+                provider: "Apple",
+                name: finalName,
+                email: finalEmail,
+                role: currentRole || "donor"
+            });
+
+            currentUser = res.user;
+            authToken = res.token;
+            localStorage.setItem("foodshareCurrentUser", JSON.stringify(currentUser));
+            localStorage.setItem("foodshareToken", authToken);
+
+            renderNavAuth();
+            await loadDonationsFromServer();
+            await loadNotificationsFromServer();
+
+            showToast(`Apple ID Verified! Welcome, ${currentUser.name} `);
+
+            if (currentUser.role === "donor") {
+                showDonorDashboard();
+            } else {
+                showNGODashboard();
+            }
+        } catch (err) {
+            showToast("Apple sign in failed: " + err.message);
+        }
+    }, 700);
+}
+
+function socialLogin(provider) {
+    if (provider === "Google") {
+        openGoogleAccountChooser();
+    } else if (provider === "Apple") {
+        openAppleAccountChooser();
+    } else {
+        showToast(`Connecting with ${provider}... ⚡`);
+        demoLogin(currentRole);
+    }
+}
+
 
 function forgotPassword() {
     const email = document.getElementById("authEmail").value.trim();
@@ -669,6 +1008,14 @@ async function donorTab(tab, button = null) {
         await loadDonationsFromServer(false);
     }
 
+    if (tab === "donate" && googleMapInstance && window.google) {
+        setTimeout(() => {
+            google.maps.event.trigger(googleMapInstance, "resize");
+            const pos = googleMapMarker?.getPosition() || defaultMapCoords;
+            googleMapInstance.setCenter(pos);
+        }, 100);
+    }
+
     if (tab === "overview") {
         updateDonorDashboard();
     } else if (tab === "donate") {
@@ -716,24 +1063,57 @@ function updateDonorDashboard() {
 
 /* ================= DONATION FORM ================= */
 
+/* ================= DONATION FORM ================= */
+
+function getTodayFormattedDDMMYYYY() {
+    const now = new Date();
+    const dd = String(now.getDate()).padStart(2, "0");
+    const mm = String(now.getMonth() + 1).padStart(2, "0");
+    const yyyy = now.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+}
+
 function initFormDates() {
-    const today = new Date().toISOString().split("T")[0];
+    const todayFormatted = getTodayFormattedDDMMYYYY();
     const preparedInput = document.getElementById("preparedDate");
     const expiryInput = document.getElementById("expiryDate");
 
-    if (preparedInput) {
-        if (!preparedInput.value) preparedInput.value = today;
-        preparedInput.max = today;
+    if (preparedInput && !preparedInput.value) {
+        preparedInput.value = todayFormatted;
     }
-    if (expiryInput) {
-        expiryInput.min = today;
+    if (expiryInput && !expiryInput.value) {
+        expiryInput.value = "";
     }
+}
+
+function attachDateInputMask(inputEl) {
+    if (!inputEl) return;
+    inputEl.addEventListener("input", function () {
+        let val = this.value.replace(/[^\d]/g, "");
+        if (val.length > 8) val = val.substring(0, 8);
+        if (val.length >= 5) {
+            this.value = `${val.substring(0, 2)}/${val.substring(2, 4)}/${val.substring(4)}`;
+        } else if (val.length >= 3) {
+            this.value = `${val.substring(0, 2)}/${val.substring(2)}`;
+        } else {
+            this.value = val;
+        }
+        if (this.id === "expiryDate") {
+            updatePriorityPreview();
+        }
+    });
 }
 
 function resetDonationForm() {
     const form = document.getElementById("donationForm");
     if (form) form.reset();
     removeImage();
+
+    const latInput = document.getElementById("pickupLatitude");
+    const lngInput = document.getElementById("pickupLongitude");
+    if (latInput) latInput.value = "";
+    if (lngInput) lngInput.value = "";
+    if (typeof resetMapPicker === "function") resetMapPicker();
 
     const badge = document.getElementById("priorityBadge");
     const text = document.getElementById("priorityText");
@@ -742,7 +1122,7 @@ function resetDonationForm() {
         badge.textContent = "Not analyzed";
     }
     if (text) {
-        text.textContent = "Complete the form to calculate priority.";
+        text.textContent = "Enter expiry date (DD/MM/YYYY) to calculate priority.";
     }
 
     initFormDates();
@@ -751,6 +1131,11 @@ function resetDonationForm() {
 function setupDonationForm() {
     const form = document.getElementById("donationForm");
     if (!form) return;
+
+    const prepInput = document.getElementById("preparedDate");
+    const expInput = document.getElementById("expiryDate");
+    attachDateInputMask(prepInput);
+    attachDateInputMask(expInput);
 
     form.addEventListener("submit", async function (event) {
         event.preventDefault();
@@ -763,10 +1148,31 @@ function setupDonationForm() {
         const foodName = document.getElementById("foodName").value.trim();
         const foodType = document.getElementById("foodType").value;
         const quantity = Number(document.getElementById("foodQuantity").value);
-        const preparedDate = document.getElementById("preparedDate").value;
-        const expiryDate = document.getElementById("expiryDate").value;
+        const preparedDate = document.getElementById("preparedDate").value.trim();
+        const expiryDate = document.getElementById("expiryDate").value.trim();
         const pickupLocation = document.getElementById("pickupLocation").value.trim();
         const description = document.getElementById("foodDescription").value.trim();
+
+        const imgErrorEl = document.getElementById("foodImageError");
+        if (imgErrorEl) {
+            imgErrorEl.classList.add("hidden");
+            imgErrorEl.textContent = "";
+        }
+
+        // Mandatory food image validation (compulsory)
+        if (!uploadedImageBase64) {
+            showToast("⚠️ Food photo is required. Please upload an image of the food.");
+            if (imgErrorEl) {
+                imgErrorEl.textContent = "Food photo is required. Please upload an image (JPG, PNG, WebP).";
+                imgErrorEl.classList.remove("hidden");
+            }
+            const box = document.getElementById("foodUploadBox");
+            if (box) {
+                box.scrollIntoView({ behavior: "smooth", block: "center" });
+                box.style.borderColor = "var(--danger, #dc2626)";
+            }
+            return;
+        }
 
         if (!foodName || !foodType || !quantity || !preparedDate || !expiryDate || !pickupLocation) {
             showToast("Please complete all required fields.");
@@ -778,50 +1184,47 @@ function setupDonationForm() {
             return;
         }
 
-        if (new Date(expiryDate) < new Date(preparedDate)) {
+        // Validate Prepared Date format
+        const parsedPrepared = window.ShareBiteDateUtils
+            ? window.ShareBiteDateUtils.parseDateInput(preparedDate)
+            : { valid: Boolean(preparedDate) };
+
+        if (!parsedPrepared.valid) {
+            showToast(parsedPrepared.error || "Please enter a valid prepared date in DD/MM/YYYY format.");
+            document.getElementById("preparedDate")?.focus();
+            return;
+        }
+
+        // Validate Expiry Date format
+        const parsedExpiry = window.ShareBiteDateUtils
+            ? window.ShareBiteDateUtils.parseDateInput(expiryDate)
+            : { valid: Boolean(expiryDate) };
+
+        if (!parsedExpiry.valid) {
+            showToast(parsedExpiry.error || "Please enter a valid calendar expiry date in DD/MM/YYYY format.");
+            document.getElementById("expiryDate")?.focus();
+            return;
+        }
+
+        if (parsedPrepared.iso && parsedExpiry.iso && parsedExpiry.iso < parsedPrepared.iso) {
             showToast("Expiry date cannot be before prepared date.");
             return;
         }
 
-        // STRICT MANDATORY FOOD IMAGE & REAL AI VERIFICATION
-        if (!uploadedImageBase64) {
-            showToast("❌ Uploading a food image is mandatory! Please upload a photo of the food you want to donate.");
-            const uploadBox = document.getElementById("foodUploadBox");
-            if (uploadBox) {
-                uploadBox.classList.add("has-error");
-                uploadBox.scrollIntoView({ behavior: "smooth", block: "center" });
-                setTimeout(() => uploadBox.classList.remove("has-error"), 1500);
-            }
-            return;
-        }
-
-        if (isAnalyzingImage) {
-            showToast("⏳ Real AI is currently analyzing your food image. Please wait a moment...");
-            return;
-        }
-
-        if (!lastAIVerifiedStatus || !lastAIVerifiedStatus.isFood || !lastAIVerifiedStatus.isSafeForDonation) {
-            showToast("❌ Image verification required: You must upload an image verified as genuine, safe food by Real AI.");
-            const uploadBox = document.getElementById("foodUploadBox");
-            if (uploadBox) {
-                uploadBox.scrollIntoView({ behavior: "smooth", block: "center" });
-            }
-            return;
-        }
-
-        const priority = calculatePriority(expiryDate, quantity, preparedDate);
-        const image = uploadedImageBase64;
+        const latitudeVal = document.getElementById("pickupLatitude")?.value;
+        const longitudeVal = document.getElementById("pickupLongitude")?.value;
 
         const payload = {
             foodName,
             foodType,
             quantity,
-            preparedDate,
-            expiryDate,
+            preparedDate: parsedPrepared.iso || preparedDate,
+            expiryDate: parsedExpiry.iso || expiryDate,
             pickupLocation,
+            latitude: latitudeVal ? Number(latitudeVal) : null,
+            longitude: longitudeVal ? Number(longitudeVal) : null,
             description,
-            image,
-            priority: priority === "Expired" ? "Low" : priority
+            image: uploadedImageBase64
         };
 
         try {
@@ -846,82 +1249,89 @@ function setupDonationForm() {
 }
 
 
-/* ================= PRIORITY CALCULATION ================= */
+/* ================= PRIORITY CALCULATION (EXPIRY DATE ONLY) ================= */
 
-function calculatePriority(expiryDate, quantity, preparedDate = null) {
+function calculatePriority(expiryDate) {
     if (!expiryDate) return "Low";
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const parts = expiryDate.split("-");
-    const expiry = new Date(parts[0], parts[1] - 1, parts[2]);
-    expiry.setHours(23, 59, 59, 999);
-
-    const diffMs = expiry.getTime() - today.getTime();
-    const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-    const qty = Number(quantity) || 0;
-
-    if (days < 0) {
-        return "Expired";
+    if (window.ShareBiteDateUtils) {
+        const info = window.ShareBiteDateUtils.calculateFoodPriority(expiryDate);
+        return info.priority;
     }
-
-    if (days <= 1 || (days <= 2 && qty >= 15)) {
-        return "High";
-    }
-
-    if (days <= 3) {
-        return "Medium";
-    }
-
-    return "Low";
+    return "Medium";
 }
 
 function updatePriorityPreview() {
-    const expiry = document.getElementById("expiryDate")?.value;
-    const quantity = Number(document.getElementById("foodQuantity")?.value || 0);
-    const prepared = document.getElementById("preparedDate")?.value;
-
+    const expiryRaw = document.getElementById("expiryDate")?.value?.trim();
     const badge = document.getElementById("priorityBadge");
     const text = document.getElementById("priorityText");
 
     if (!badge || !text) return;
 
-    if (!expiry) {
+    if (!expiryRaw) {
         badge.className = "priority-badge";
         badge.textContent = "Not analyzed";
-        text.textContent = "Complete the form to calculate priority.";
+        text.textContent = "Enter expiry date (DD/MM/YYYY) to calculate priority.";
         return;
     }
 
-    if (prepared && expiry && new Date(expiry) < new Date(prepared)) {
-        badge.className = "priority-badge high";
-        badge.textContent = "INVALID DATES";
-        text.textContent = "Expiry date cannot be earlier than prepared date.";
+    if (!window.ShareBiteDateUtils) {
+        badge.className = "priority-badge";
+        badge.textContent = "PENDING";
+        text.textContent = "Calculating priority...";
         return;
     }
 
-    const priority = calculatePriority(expiry, quantity, prepared);
-    badge.className = "priority-badge";
-
-    if (priority === "Expired") {
-        badge.classList.add("high");
-        badge.textContent = "EXPIRED";
-        text.textContent = "Warning: Selected expiry date is in the past.";
-    } else if (priority === "High") {
-        badge.classList.add("high");
-        badge.textContent = "HIGH PRIORITY";
-        text.textContent = "Urgent: Short shelf-life or high volume. Fast collection recommended.";
-    } else if (priority === "Medium") {
-        badge.classList.add("medium");
-        badge.textContent = "MEDIUM PRIORITY";
-        text.textContent = "Moderate urgency: Arrange collection within 2-3 days.";
-    } else {
-        badge.classList.add("low");
-        badge.textContent = "LOW PRIORITY";
-        text.textContent = "Normal collection window: Shelf-life permits standard scheduling.";
+    const parsed = window.ShareBiteDateUtils.parseDateInput(expiryRaw);
+    if (!parsed.valid) {
+        badge.className = "priority-badge critical";
+        badge.textContent = "INVALID DATE";
+        text.textContent = parsed.error || "Please enter a valid calendar date in DD/MM/YYYY format (e.g. 16/10/2026).";
+        return;
     }
+
+    const priorityInfo = window.ShareBiteDateUtils.calculateFoodPriority(parsed.iso);
+    badge.className = `priority-badge ${priorityInfo.badgeClass || 'low'}`;
+    badge.textContent = priorityInfo.badgeLabel;
+    text.textContent = priorityInfo.warning;
 }
+
+function getPriorityBadgeHTML(donation) {
+    const p = (donation.priority || "LOW").toUpperCase();
+    if (donation.isExpired || donation.status === "Expired") {
+        return `<span class="priority-badge critical" title="Food has expired. Expired food must not be offered for redistribution.">🔴 CRITICAL</span>`;
+    }
+    if (p === "CRITICAL") {
+        return `<span class="priority-badge critical" title="Food expires today or requires urgent review">🔴 CRITICAL</span>`;
+    }
+    if (p === "HIGH") {
+        return `<span class="priority-badge high" title="Food expires within 1–2 days">🟠 HIGH</span>`;
+    }
+    if (p === "MEDIUM") {
+        return `<span class="priority-badge medium" title="Food expires in 3–5 days">🟡 MEDIUM</span>`;
+    }
+    return `<span class="priority-badge low" title="Food expires in more than 5 days">🟢 LOW</span>`;
+}
+
+function getDaysRemainingText(donation) {
+    if (donation.isExpired || donation.status === "Expired") {
+        const days = Math.abs(donation.daysRemaining || 0);
+        return `<span class="priority-text-critical">⚠️ Expired ${days === 1 ? 'yesterday' : `${days} days ago`}</span>`;
+    }
+    if (donation.daysRemaining === 0) {
+        return `<span class="priority-text-critical">⚠️ Expires today! Urgent review</span>`;
+    }
+    if (donation.daysRemaining === 1) {
+        return `<span class="priority-text-high">⚡ Expires tomorrow (1 day)</span>`;
+    }
+    if (donation.daysRemaining === 2) {
+        return `<span class="priority-text-high">⚡ Expires in 2 days</span>`;
+    }
+    if (donation.daysRemaining <= 5) {
+        return `<span class="priority-text-medium">⏰ Expires in ${donation.daysRemaining} days</span>`;
+    }
+    return `<span class="priority-text-low">🍃 Expires in ${donation.daysRemaining} days</span>`;
+}
+
 
 
 /* ================= IMAGE UPLOAD ================= */
@@ -953,6 +1363,302 @@ function compressImageFile(file, maxWidth = 750, maxHeight = 750, quality = 0.8)
     });
 }
 
+/* ================= GOOGLE MAPS LOCATION PICKER INTEGRATION ================= */
+
+let googleMapInstance = null;
+let googleMapMarker = null;
+let googleMapGeocoder = null;
+let googlePlacesAutocomplete = null;
+let isGoogleMapsLoaded = false;
+let defaultMapCoords = { lat: 19.0760, lng: 72.8777 }; // Default fallback center (Mumbai / City Center)
+
+async function initGoogleMaps() {
+    try {
+        const config = await API.get("/config/maps");
+        if (config && config.hasKey && config.key) {
+            loadGoogleMapsScript(config.key);
+        } else {
+            updateMapPlaceholderState(false);
+        }
+    } catch (err) {
+        console.warn("Could not check Google Maps configuration:", err);
+    }
+}
+
+function loadGoogleMapsScript(apiKey) {
+    if (window.google && window.google.maps) {
+        setupGoogleMapPicker();
+        return;
+    }
+
+    if (document.getElementById("googleMapsScriptTag")) {
+        return;
+    }
+
+    window.onGoogleMapsLoaded = function () {
+        isGoogleMapsLoaded = true;
+        setupGoogleMapPicker();
+    };
+
+    const script = document.createElement("script");
+    script.id = "googleMapsScriptTag";
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places&callback=onGoogleMapsLoaded`;
+    script.async = true;
+    script.defer = true;
+    script.onerror = function () {
+        console.error("Failed to load Google Maps script. Check your API key and enabled APIs.");
+        showToast("⚠️ Could not load Google Maps. Please check your API key.");
+    };
+    document.head.appendChild(script);
+}
+
+function updateMapPlaceholderState(hasKey) {
+    const badge = document.getElementById("mapLoadedBadge");
+    const placeholder = document.getElementById("mapPickerPlaceholder");
+    if (badge) {
+        if (hasKey) {
+            badge.classList.remove("hidden");
+            badge.textContent = "🗺️ Google Maps Active";
+        } else {
+            badge.classList.add("hidden");
+        }
+    }
+    if (placeholder && hasKey) {
+        placeholder.style.display = "none";
+    }
+}
+
+function setupGoogleMapPicker() {
+    const mapEl = document.getElementById("googleMapPicker");
+    const inputEl = document.getElementById("pickupLocation");
+    if (!mapEl || !window.google || !window.google.maps) return;
+
+    updateMapPlaceholderState(true);
+
+    const latInput = document.getElementById("pickupLatitude");
+    const lngInput = document.getElementById("pickupLongitude");
+    let initialCenter = defaultMapCoords;
+    let hasExistingCoords = false;
+
+    if (latInput && lngInput && latInput.value && lngInput.value) {
+        const lat = parseFloat(latInput.value);
+        const lng = parseFloat(lngInput.value);
+        if (!isNaN(lat) && !isNaN(lng)) {
+            initialCenter = { lat, lng };
+            hasExistingCoords = true;
+        }
+    }
+
+    googleMapGeocoder = new google.maps.Geocoder();
+
+    googleMapInstance = new google.maps.Map(mapEl, {
+        center: initialCenter,
+        zoom: hasExistingCoords ? 16 : 14,
+        mapTypeControl: false,
+        streetViewControl: false,
+        fullscreenControl: true,
+        zoomControl: true,
+        gestureHandling: "cooperative"
+    });
+
+    googleMapMarker = new google.maps.Marker({
+        position: initialCenter,
+        map: googleMapInstance,
+        draggable: true,
+        animation: google.maps.Animation.DROP,
+        title: "Drag to set exact pickup location"
+    });
+
+    updateCoordsDisplay(initialCenter.lat, initialCenter.lng);
+
+    googleMapMarker.addListener("dragend", function () {
+        const pos = googleMapMarker.getPosition();
+        if (!pos) return;
+        const lat = pos.lat();
+        const lng = pos.lng();
+        updateSelectedCoordinates(lat, lng);
+        reverseGeocodePosition(lat, lng);
+    });
+
+    googleMapInstance.addListener("click", function (event) {
+        if (!event.latLng) return;
+        const lat = event.latLng.lat();
+        const lng = event.latLng.lng();
+        googleMapMarker.setPosition(event.latLng);
+        updateSelectedCoordinates(lat, lng);
+        reverseGeocodePosition(lat, lng);
+    });
+
+    if (inputEl && window.google.maps.places) {
+        googlePlacesAutocomplete = new google.maps.places.Autocomplete(inputEl, {
+            fields: ["formatted_address", "geometry", "name"]
+        });
+
+        googlePlacesAutocomplete.bindTo("bounds", googleMapInstance);
+
+        googlePlacesAutocomplete.addListener("place_changed", function () {
+            const place = googlePlacesAutocomplete.getPlace();
+            if (!place.geometry || !place.geometry.location) {
+                return;
+            }
+
+            const loc = place.geometry.location;
+            const lat = loc.lat();
+            const lng = loc.lng();
+
+            googleMapInstance.setCenter(loc);
+            googleMapInstance.setZoom(16);
+            googleMapMarker.setPosition(loc);
+
+            updateSelectedCoordinates(lat, lng);
+
+            if (place.formatted_address) {
+                inputEl.value = place.formatted_address;
+            }
+        });
+    }
+
+    if (!hasExistingCoords && navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                const userLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                defaultMapCoords = userLoc;
+                if (googleMapInstance) {
+                    googleMapInstance.setCenter(userLoc);
+                    if (googleMapMarker) googleMapMarker.setPosition(userLoc);
+                    updateCoordsDisplay(userLoc.lat, userLoc.lng);
+                }
+            },
+            () => {},
+            { timeout: 8000 }
+        );
+    }
+}
+
+function updateSelectedCoordinates(lat, lng) {
+    const latInput = document.getElementById("pickupLatitude");
+    const lngInput = document.getElementById("pickupLongitude");
+    if (latInput) latInput.value = lat.toFixed(6);
+    if (lngInput) lngInput.value = lng.toFixed(6);
+    updateCoordsDisplay(lat, lng);
+}
+
+function updateCoordsDisplay(lat, lng) {
+    const textEl = document.getElementById("mapCoordsText");
+    const statusText = document.getElementById("mapStatusText");
+    if (textEl && lat && lng) {
+        textEl.textContent = `📍 ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+    }
+    if (statusText) {
+        statusText.innerHTML = `✅ <strong>Location pinned</strong> (drag to fine-tune)`;
+    }
+}
+
+function reverseGeocodePosition(lat, lng) {
+    if (!googleMapGeocoder) return;
+    const latLng = { lat, lng };
+
+    googleMapGeocoder.geocode({ location: latLng }, function (results, status) {
+        if (status === "OK" && results && results[0]) {
+            const inputEl = document.getElementById("pickupLocation");
+            if (inputEl) {
+                inputEl.value = results[0].formatted_address;
+            }
+            showToast(`📍 Location pinned: ${results[0].formatted_address.slice(0, 45)}...`);
+        }
+    });
+}
+
+function detectUserLocation() {
+    const btn = document.getElementById("btnDetectLocation");
+    const inputEl = document.getElementById("pickupLocation");
+    const origHtml = btn ? btn.innerHTML : "";
+
+    if (!navigator.geolocation) {
+        showToast("Geolocation is not supported by your browser.");
+        return;
+    }
+
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `⏳ Locating...`;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+        async (position) => {
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+            updateSelectedCoordinates(lat, lng);
+
+            if (googleMapInstance && googleMapMarker && window.google) {
+                const userLatLng = new google.maps.LatLng(lat, lng);
+                googleMapInstance.setCenter(userLatLng);
+                googleMapInstance.setZoom(16);
+                googleMapMarker.setPosition(userLatLng);
+                reverseGeocodePosition(lat, lng);
+            } else {
+                try {
+                    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
+                    const data = await res.json();
+                    if (data && data.display_name && inputEl) {
+                        inputEl.value = data.display_name;
+                        showToast("📍 Current location detected!");
+                    } else if (inputEl) {
+                        inputEl.value = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+                    }
+                } catch {
+                    if (inputEl) inputEl.value = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+                }
+            }
+
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = `✅ Location Found`;
+                setTimeout(() => { btn.innerHTML = origHtml; }, 2500);
+            }
+        },
+        (error) => {
+            console.warn("Geolocation error:", error);
+            showToast("Could not retrieve current location. Please check browser permissions.");
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = origHtml;
+            }
+        },
+        { enableHighAccuracy: true, timeout: 10000 }
+    );
+}
+
+async function saveGoogleMapsKeyFromUI() {
+    const input = document.getElementById("inputGoogleMapsKey");
+    if (!input || !input.value.trim()) {
+        showToast("Please paste your Google Maps API key first.");
+        return;
+    }
+
+    const key = input.value.trim();
+    try {
+        showToast("Saving Google Maps API key... ⏳");
+        const res = await API.post("/config/maps", { apiKey: key });
+        showToast("✅ " + res.message);
+        loadGoogleMapsScript(key);
+    } catch (err) {
+        showToast("Error saving Google Maps key: " + err.message);
+    }
+}
+
+function resetMapPicker() {
+    if (googleMapMarker && googleMapInstance) {
+        googleMapMarker.setPosition(defaultMapCoords);
+        googleMapInstance.setCenter(defaultMapCoords);
+        googleMapInstance.setZoom(14);
+    }
+    const statusText = document.getElementById("mapStatusText");
+    const coordsText = document.getElementById("mapCoordsText");
+    if (statusText) statusText.innerHTML = `📍 Click or drag pin to fine-tune exact pickup spot`;
+    if (coordsText) coordsText.textContent = "";
+}
+
 /* ================= REAL AI VISION INTEGRATION ================= */
 
 let isAnalyzingImage = false;
@@ -967,8 +1673,29 @@ function setupImageUpload() {
         const file = this.files[0];
         if (!file) return;
 
-        if (!file.type.startsWith("image/")) {
-            showToast("Please select a valid image file (JPG, PNG, WebP).");
+        const errorEl = document.getElementById("foodImageError");
+        const uploadBox = document.getElementById("foodUploadBox");
+        if (errorEl) errorEl.classList.add("hidden");
+        if (uploadBox) uploadBox.style.borderColor = "";
+
+        const validTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+        if (!validTypes.includes(file.type.toLowerCase())) {
+            showToast("Invalid file type. Please upload a JPG, JPEG, PNG, or WebP photo.");
+            if (errorEl) {
+                errorEl.textContent = "Please upload a valid image file (JPG, JPEG, PNG, or WebP).";
+                errorEl.classList.remove("hidden");
+            }
+            this.value = "";
+            return;
+        }
+
+        // Validate file size (max 5MB)
+        if (file.size > 5 * 1024 * 1024) {
+            showToast("Image size exceeds 5MB limit. Please choose a smaller photo.");
+            if (errorEl) {
+                errorEl.textContent = "Image size exceeds 5MB limit. Please choose a smaller photo.";
+                errorEl.classList.remove("hidden");
+            }
             this.value = "";
             return;
         }
@@ -976,34 +1703,24 @@ function setupImageUpload() {
         try {
             const compressed = await compressImageFile(file);
             uploadedImageBase64 = compressed;
-            lastAIVerifiedStatus = null;
 
             const previewImg = document.getElementById("imagePreview");
             const container = document.getElementById("imagePreviewContainer");
-            const overlay = document.getElementById("imageVerificationOverlay");
-            const alertEl = document.getElementById("aiRejectionAlert");
             const reqBadge = document.getElementById("foodImageRequirementBadge");
 
-            if (alertEl) alertEl.classList.add("hidden");
             if (previewImg) {
                 previewImg.src = compressed;
-                previewImg.className = "food-preview verifying";
-            }
-            if (overlay) {
-                overlay.className = "image-verification-overlay verifying";
-                overlay.innerHTML = "⏳ AI Vision Inspecting...";
-                overlay.classList.remove("hidden");
+                previewImg.className = "food-preview";
             }
             if (container) container.classList.remove("hidden");
             if (reqBadge) {
-                reqBadge.className = "status pending";
-                reqBadge.textContent = "AI Verifying...";
+                reqBadge.className = "status accepted";
+                reqBadge.textContent = "Photo Attached ✅";
             }
 
-            // Auto-trigger Real AI Vision Analysis upon upload
-            await triggerAIVisionAnalysis();
+            showToast("📸 Food photo attached! Ready for submission.");
         } catch (err) {
-            console.error("Image compression error:", err);
+            console.error("Image processing error:", err);
             showToast("Could not process the selected image.");
         }
     });
@@ -1011,32 +1728,23 @@ function setupImageUpload() {
 
 function removeImage() {
     uploadedImageBase64 = null;
-    latestAISuggestions = null;
-    lastAIVerifiedStatus = null;
 
     const input = document.getElementById("foodImage");
     const previewContainer = document.getElementById("imagePreviewContainer");
     const previewImg = document.getElementById("imagePreview");
-    const overlay = document.getElementById("imageVerificationOverlay");
-    const aiCard = document.getElementById("aiAnalysisCard");
-    const alertEl = document.getElementById("aiRejectionAlert");
     const reqBadge = document.getElementById("foodImageRequirementBadge");
+    const errorEl = document.getElementById("foodImageError");
 
     if (input) input.value = "";
     if (previewImg) {
         previewImg.src = "";
         previewImg.className = "food-preview";
     }
-    if (overlay) {
-        overlay.classList.add("hidden");
-        overlay.innerHTML = "";
-    }
     if (previewContainer) previewContainer.classList.add("hidden");
-    if (aiCard) aiCard.classList.add("hidden");
-    if (alertEl) alertEl.classList.add("hidden");
+    if (errorEl) errorEl.classList.add("hidden");
     if (reqBadge) {
         reqBadge.className = "status pending";
-        reqBadge.textContent = "Upload Required";
+        reqBadge.textContent = "Required";
     }
 }
 
@@ -1094,33 +1802,29 @@ async function triggerAIVisionAnalysis() {
         latestAISuggestions = analysis;
 
         // -------------------------------------------------------------
-        // STRICT NON-FOOD REJECTION
+        // NON-FOOD DETECTION ADVISORY (Optional Notice, not blocking)
         // -------------------------------------------------------------
         if (!analysis.isFood) {
             lastAIVerifiedStatus = { isFood: false, isSafeForDonation: false };
-            uploadedImageBase64 = null; // Clear base64 so non-food CANNOT be submitted
 
-            const input = document.getElementById("foodImage");
-            if (input) input.value = "";
-
-            if (previewImg) previewImg.className = "food-preview rejected";
+            if (previewImg) previewImg.className = "food-preview";
             if (overlay) {
                 overlay.className = "image-verification-overlay rejected";
-                overlay.innerHTML = "🚫 REJECTED: Not Food";
+                overlay.innerHTML = "💡 Advisory: Might not be food";
                 overlay.classList.remove("hidden");
             }
             if (reqBadge) {
-                reqBadge.className = "status expired";
-                reqBadge.textContent = "Rejected (Not Food)";
+                reqBadge.className = "status";
+                reqBadge.textContent = "Photo Attached (Advisory)";
             }
 
             const msgEl = document.getElementById("aiRejectionMessage");
             const badgeEl = document.getElementById("aiRejectionBadge");
             if (msgEl) {
-                msgEl.textContent = analysis.rejectionReason || "This photo does not depict edible food or groceries. ShareBite requires a genuine food photo for every donation.";
+                msgEl.textContent = analysis.rejectionReason || "AI did not clearly recognize food in this image. You can upload a clearer photo or keep it and continue with your donation.";
             }
             if (badgeEl) {
-                badgeEl.textContent = "Non-Food Rejected";
+                badgeEl.textContent = "Advisory (Optional)";
             }
             if (alertEl) {
                 alertEl.classList.remove("hidden");
@@ -1128,38 +1832,34 @@ async function triggerAIVisionAnalysis() {
             }
             if (card) card.classList.add("hidden");
 
-            showToast("❌ Image Rejected by AI: " + (analysis.rejectionReason || "Not a food image!"));
+            showToast("💡 AI Advisory: Image may not depict food (submission is still allowed).");
             return;
         }
 
         // -------------------------------------------------------------
-        // FOOD SAFETY / SPOILAGE REJECTION
+        // FOOD SAFETY / SPOILAGE ADVISORY
         // -------------------------------------------------------------
         if (analysis.isFood && !analysis.isSafeForDonation) {
             lastAIVerifiedStatus = { isFood: true, isSafeForDonation: false };
-            uploadedImageBase64 = null; // Clear base64 so unsafe food CANNOT be submitted
 
-            const input = document.getElementById("foodImage");
-            if (input) input.value = "";
-
-            if (previewImg) previewImg.className = "food-preview rejected";
+            if (previewImg) previewImg.className = "food-preview";
             if (overlay) {
                 overlay.className = "image-verification-overlay rejected";
-                overlay.innerHTML = "⚠️ REJECTED: Unsafe Food";
+                overlay.innerHTML = "⚠️ Freshness Concern Flagged";
                 overlay.classList.remove("hidden");
             }
             if (reqBadge) {
-                reqBadge.className = "status expired";
-                reqBadge.textContent = "Rejected (Unsafe)";
+                reqBadge.className = "status pending";
+                reqBadge.textContent = "Freshness Concern";
             }
 
             const msgEl = document.getElementById("aiRejectionMessage");
             const badgeEl = document.getElementById("aiRejectionBadge");
             if (msgEl) {
-                msgEl.textContent = analysis.safetyWarning || analysis.rejectionReason || "Food appears spoiled, decomposing, or unsafe for donation. To protect community health, only fresh food can be shared.";
+                msgEl.textContent = analysis.safetyWarning || analysis.rejectionReason || "AI noticed potential freshness issues. Please ensure the food is fresh and safe before submitting.";
             }
             if (badgeEl) {
-                badgeEl.textContent = "Unsafe / Spoiled";
+                badgeEl.textContent = "Safety Advisory";
             }
             if (alertEl) {
                 alertEl.classList.remove("hidden");
@@ -1167,7 +1867,7 @@ async function triggerAIVisionAnalysis() {
             }
             if (card) card.classList.add("hidden");
 
-            showToast("⚠️ Image Rejected: Food appears spoiled or unsafe for donation.");
+            showToast("⚠️ AI Warning: Freshness concern flagged (submission is still allowed).");
             return;
         }
 
@@ -1179,12 +1879,12 @@ async function triggerAIVisionAnalysis() {
         if (previewImg) previewImg.className = "food-preview verified";
         if (overlay) {
             overlay.className = "image-verification-overlay verified";
-            overlay.innerHTML = `✅ AI Verified: ${escapeHTML(analysis.foodName || 'Food Approved')}`;
+            overlay.innerHTML = `✅ AI Recognized: ${escapeHTML(analysis.foodName || 'Food Detected')}`;
             overlay.classList.remove("hidden");
         }
         if (reqBadge) {
             reqBadge.className = "status accepted";
-            reqBadge.textContent = "✅ AI Verified";
+            reqBadge.textContent = "✅ AI Analyzed";
         }
         if (alertEl) alertEl.classList.add("hidden");
 
@@ -1203,7 +1903,7 @@ async function triggerAIVisionAnalysis() {
                     <div><strong>🍽️ Detected Dish:</strong> ${escapeHTML(analysis.foodName)}</div>
                     <div><strong>📦 Category:</strong> ${escapeHTML(analysis.foodType)}</div>
                     <div><strong>⚖️ Est. Quantity:</strong> ${analysis.estimatedQuantityKg} kg (~${Math.round(analysis.estimatedQuantityKg * 4)} meals)</div>
-                    <div><strong>🛡️ Safe for Donation:</strong> <span style="color:var(--green);font-weight:700;">✅ Verified Safe</span></div>
+                    <div><strong>🛡️ Safe for Donation:</strong> <span style="color:var(--green);font-weight:700;">✅ Fresh & Safe</span></div>
                     <div><strong>⚡ Urgency Priority:</strong> <span class="priority-text-${(analysis.priority || 'medium').toLowerCase()}">${analysis.priority}</span></div>
                     <div><strong>📅 Shelf-life estimate:</strong> ~${analysis.suggestedExpiryDays || 2} days</div>
                 </div>
@@ -1213,41 +1913,47 @@ async function triggerAIVisionAnalysis() {
             `;
         }
 
-        showToast(`✅ Real Food Verified: "${analysis.foodName}"! Click 'Auto-Fill Form' to apply AI suggestions. ✨`);
+        showToast(`✅ Food Identified: "${analysis.foodName}"! Click 'Auto-Fill Form' to apply AI suggestions. ✨`);
     } catch (err) {
         console.error("AI analysis error:", err);
         const errMsg = err.message || "";
 
+        if (previewImg) previewImg.className = "food-preview";
+
         if (errMsg.includes("API_KEY") || errMsg.includes("Key Required") || errMsg.includes("API key")) {
-            showToast("⚠️ Groq API key is not configured in .env file.");
+            showToast("ℹ️ Groq API key is not configured in .env. AI analysis is optional — you can still submit!");
             if (overlay) {
-                overlay.className = "image-verification-overlay rejected";
-                overlay.innerHTML = "⚠️ Groq Key Needed in .env";
+                overlay.className = "image-verification-overlay";
+                overlay.style.background = "rgba(75, 85, 99, 0.85)";
+                overlay.innerHTML = "ℹ️ AI Optional (No Groq Key)";
+                overlay.classList.remove("hidden");
             }
             if (reqBadge) {
-                reqBadge.className = "status expired";
-                reqBadge.textContent = "API Key Needed";
+                reqBadge.className = "status";
+                reqBadge.textContent = "Photo Attached";
             }
         } else {
-            showToast("AI analysis error: " + errMsg);
+            showToast("ℹ️ AI analysis skipped (" + errMsg + "). You can still submit your donation!");
             if (overlay) {
-                overlay.className = "image-verification-overlay rejected";
-                overlay.innerHTML = "⚠️ Inspection Error";
+                overlay.className = "image-verification-overlay";
+                overlay.style.background = "rgba(75, 85, 99, 0.85)";
+                overlay.innerHTML = "ℹ️ AI Skipped";
+                overlay.classList.remove("hidden");
             }
             if (reqBadge) {
-                reqBadge.className = "status expired";
-                reqBadge.textContent = "Verification Failed";
+                reqBadge.className = "status";
+                reqBadge.textContent = "Photo Attached";
             }
         }
 
         if (resultsEl) {
-            resultsEl.innerHTML = `<span style="color:var(--danger)">Error inspecting image with Real AI: ${escapeHTML(errMsg)}</span>`;
+            resultsEl.innerHTML = `<span style="color:var(--muted)">AI inspection unavailable: ${escapeHTML(errMsg)}. <strong>AI analysis is optional</strong> — you can complete the form and submit your donation directly.</span>`;
         }
     } finally {
         isAnalyzingImage = false;
         if (btn) {
             btn.disabled = false;
-            btn.innerHTML = originalText || `✨ Analyze & Verify with Real AI`;
+            btn.innerHTML = originalText || `✨ Analyze Food with AI (Optional)`;
         }
     }
 }
@@ -1630,8 +2336,9 @@ function renderNGOAvailable() {
     const filter = document.getElementById("ngoFoodFilter")?.value || "";
     const sort = document.getElementById("ngoSortFilter")?.value || "priority";
 
+    // Expired donations must NOT appear among available donations that NGOs can accept
     let available = donations.filter(donation => {
-        if (donation.status !== "Available") return false;
+        if (donation.status !== "Available" || donation.isExpired) return false;
 
         const nameMatch = (donation.foodName || "").toLowerCase().includes(search);
         const locMatch = (donation.pickupLocation || "").toLowerCase().includes(search);
@@ -1644,10 +2351,14 @@ function renderNGOAvailable() {
         return matchesSearch && matchesFilter;
     });
 
-    // Sorting
+    // Sorting: 1. Highest priority first, 2. Earliest expiry, 3. Stable secondary sort
     if (sort === "priority") {
-        const weight = { "High": 3, "Medium": 2, "Low": 1 };
-        available.sort((a, b) => (weight[b.priority] || 0) - (weight[a.priority] || 0));
+        if (window.ShareBiteDateUtils) {
+            available.sort((a, b) => window.ShareBiteDateUtils.compareDonationsByUrgency(a, b));
+        } else {
+            const weight = { "CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1 };
+            available.sort((a, b) => (weight[b.priority] || 0) - (weight[a.priority] || 0));
+        }
     } else if (sort === "quantity") {
         available.sort((a, b) => Number(b.quantity || 0) - Number(a.quantity || 0));
     } else if (sort === "newest") {
@@ -1655,7 +2366,11 @@ function renderNGOAvailable() {
     }
 
     if (available.length === 0) {
-        container.innerHTML = "";
+        container.innerHTML = emptyMessage(
+            "🥗",
+            "No available donations match",
+            "Try clearing your search or category filter to discover more surplus food."
+        );
         return;
     }
 
@@ -1666,60 +2381,84 @@ function renderNGORecentFood() {
     const container = document.getElementById("ngoRecentFood");
     if (!container) return;
 
-    const available = donations.filter(
-        donation => donation.status === "Available"
-    ).slice(0, 3);
+    // Filter out expired donations from available recommendations
+    const available = donations
+        .filter(donation => donation.status === "Available" && !donation.isExpired)
+        .sort((a, b) => window.ShareBiteDateUtils ? window.ShareBiteDateUtils.compareDonationsByUrgency(a, b) : 0)
+        .slice(0, 3);
 
     if (available.length === 0) {
-        container.innerHTML = "";
+        container.innerHTML = emptyMessage("🍃", "No food donations waiting", "Surplus food posted by local donors will appear here.");
         return;
     }
 
-    container.innerHTML = available.map(donation => `
-        <div class="donation-card" onclick="openFoodDetail(${donation.id})">
-            <img
-                class="donation-card-image"
-                src="${escapeHTML(donation.image)}"
-                alt="${escapeHTML(donation.foodName)}"
-            >
-            <div class="donation-content">
-                <div class="donation-top">
-                    <div>
-                        <h3>${escapeHTML(donation.foodName)}</h3>
-                        <span class="muted">${escapeHTML(donation.foodType)}</span>
+    container.innerHTML = available.map(donation => {
+        const priorityBadgeHtml = getPriorityBadgeHTML(donation);
+        const daysRemainingHtml = getDaysRemainingText(donation);
+        const expiryFormatted = formatDate(donation.expiryDate);
+
+        return `
+            <div class="donation-card" onclick="openFoodDetail(${donation.id})">
+                <img
+                    class="donation-card-image"
+                    src="${escapeHTML(donation.image)}"
+                    alt="${escapeHTML(donation.foodName)}"
+                    loading="lazy"
+                >
+                <div class="donation-content">
+                    <div class="donation-top" style="align-items:flex-start;gap:8px;">
+                        <div>
+                            <h3 style="margin:0 0 2px 0;">${escapeHTML(donation.foodName)}</h3>
+                            <span class="muted">${escapeHTML(donation.foodType)}</span>
+                        </div>
+                        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+                            ${priorityBadgeHtml}
+                            <span class="status ${getStatusClass(donation.status)}" style="font-size:10px;padding:2px 6px;">
+                                ${escapeHTML(donation.status)}
+                            </span>
+                        </div>
                     </div>
-                    <span class="status pending">Available</span>
-                </div>
 
-                <div class="meta-row">
-                    <span>Quantity</span>
-                    <strong>${donation.quantity} kg</strong>
-                </div>
-                <div class="meta-row">
-                    <span>Priority</span>
-                    <strong class="priority-text-${donation.priority.toLowerCase()}">${donation.priority}</strong>
-                </div>
-                <div class="meta-row">
-                    <span>Location</span>
-                    <span>${escapeHTML(donation.pickupLocation)}</span>
-                </div>
+                    <div class="meta-row">
+                        <span>Quantity</span>
+                        <strong>${donation.quantity} kg</strong>
+                    </div>
+                    <div class="meta-row">
+                        <span>Donor</span>
+                        <span>👤 ${escapeHTML(donation.donorName || "Community Member")}</span>
+                    </div>
+                    <div class="meta-row">
+                        <span>Pickup Location</span>
+                        <span>📍 ${escapeHTML(donation.pickupLocation)}</span>
+                    </div>
+                    <div class="meta-row">
+                        <span>Best Before</span>
+                        <strong>📅 ${expiryFormatted}</strong>
+                    </div>
+                    <div class="meta-row">
+                        <span>Shelf Life</span>
+                        <span style="font-size:11px;font-weight:600;">${daysRemainingHtml}</span>
+                    </div>
 
-                <div style="margin-top:14px;display:flex;gap:8px;">
-                    <button
-                        class="small-btn"
-                        style="width:100%;justify-content:center;"
-                        onclick="event.stopPropagation(); acceptDonation(${donation.id})"
-                    >
-                        🤝 Accept Food
-                    </button>
+                    <div style="margin-top:14px;display:flex;gap:8px;">
+                        <button
+                            class="small-btn"
+                            style="width:100%;justify-content:center;"
+                            onclick="event.stopPropagation(); acceptDonation(${donation.id})"
+                        >
+                            🤝 Accept Food
+                        </button>
+                    </div>
                 </div>
             </div>
-        </div>
-    `).join("");
+        `;
+    }).join("");
 }
 
 function ngoFoodItem(donation) {
-    const priorityClass = donation.priority === "High" ? "pending" : "";
+    const priorityBadgeHtml = getPriorityBadgeHTML(donation);
+    const daysRemainingHtml = getDaysRemainingText(donation);
+    const expiryFormatted = formatDate(donation.expiryDate);
 
     return `
         <div class="food-list-item">
@@ -1728,23 +2467,30 @@ function ngoFoodItem(donation) {
                     src="${escapeHTML(donation.image)}"
                     class="food-list-image"
                     alt="${escapeHTML(donation.foodName)}"
+                    loading="lazy"
                 >
-                <div>
-                    <h3>${escapeHTML(donation.foodName)}</h3>
-                    <p>
+                <div style="flex:1;">
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+                        <h3 style="margin:0;">${escapeHTML(donation.foodName)}</h3>
+                        ${priorityBadgeHtml}
+                        <span class="status ${getStatusClass(donation.status)}" style="font-size:10px;padding:2px 7px;">
+                            ${escapeHTML(donation.status)}
+                        </span>
+                    </div>
+                    <p style="margin:2px 0;">
+                        <strong>${donation.quantity} kg</strong> •
                         ${escapeHTML(donation.foodType)} •
-                        ${donation.quantity} kg •
-                        Donor: ${escapeHTML(donation.donorName || "Community Member")}
+                        Donor: 👤 ${escapeHTML(donation.donorName || "Community Member")}
                     </p>
-                    <p>📍 ${escapeHTML(donation.pickupLocation)}</p>
-                    <p>⏰ Best before: ${formatDate(donation.expiryDate)}</p>
+                    <p style="margin:2px 0;">📍 ${escapeHTML(donation.pickupLocation)}</p>
+                    <p style="margin:2px 0;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                        <span>📅 Expiry: <strong>${expiryFormatted}</strong></span>
+                        <span>${daysRemainingHtml}</span>
+                    </p>
                 </div>
             </div>
 
             <div class="food-actions">
-                <span class="status ${priorityClass}">
-                    ${donation.priority} Priority
-                </span>
                 <button
                     class="small-btn small-btn-secondary"
                     onclick="openFoodDetail(${donation.id})"
@@ -1765,6 +2511,12 @@ function ngoFoodItem(donation) {
 async function acceptDonation(id) {
     if (!currentUser) {
         showToast("Please login as an NGO first.");
+        return;
+    }
+
+    const donation = donations.find(d => d.id === Number(id));
+    if (donation && (donation.isExpired || donation.status === "Expired")) {
+        showToast("⛔ This donation has expired and cannot be accepted for redistribution.");
         return;
     }
 
@@ -1954,15 +2706,26 @@ function openFoodDetail(id) {
     const isNGO = currentUser?.role === "ngo";
     const isAcceptedByCurrentNGO = isNGO && donation.acceptedBy && donation.acceptedBy.toLowerCase() === currentUser.email.toLowerCase();
 
+    const priorityBadgeHtml = getPriorityBadgeHTML(donation);
+    const daysRemainingHtml = getDaysRemainingText(donation);
+    const expiryFormatted = formatDate(donation.expiryDate);
+    const preparedFormatted = formatDate(donation.preparedDate);
+
     container.innerHTML = `
         <div class="food-detail-header">
             <span class="eyebrow">${escapeHTML(donation.foodType)}</span>
             <h2>${escapeHTML(donation.foodName)}</h2>
             <div class="food-detail-badges">
                 <span class="status ${getStatusClass(donation.status)}">${escapeHTML(donation.status)}</span>
-                <span class="priority-badge ${donation.priority ? donation.priority.toLowerCase() : 'low'}">${donation.priority || 'Standard'} Priority</span>
+                ${priorityBadgeHtml}
             </div>
         </div>
+
+        ${donation.isExpired ? `
+            <div style="background:#fee2e2;border:1px solid #f87171;color:#991b1b;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:12px;font-weight:600;">
+                ⛔ Food has expired. Expired food must NOT be offered for redistribution.
+            </div>
+        ` : ''}
 
         <div class="food-detail-image-wrap">
             <img src="${escapeHTML(donation.image)}" alt="${escapeHTML(donation.foodName)}" class="food-detail-image">
@@ -1974,16 +2737,27 @@ function openFoodDetail(id) {
                 <strong class="detail-val">${donation.quantity} kg (~${Math.round(donation.quantity * 4)} meals)</strong>
             </div>
             <div class="detail-cell">
+                <span class="detail-label">Priority Status</span>
+                <div style="margin-top:4px;">${daysRemainingHtml}</div>
+            </div>
+            <div class="detail-cell full">
                 <span class="detail-label">Pickup Location</span>
-                <strong class="detail-val">📍 ${escapeHTML(donation.pickupLocation)}</strong>
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-top:4px;">
+                    <strong class="detail-val" style="margin:0;">📍 ${escapeHTML(donation.pickupLocation)}</strong>
+                    <a href="${donation.latitude && donation.longitude ? `https://www.google.com/maps/search/?api=1&query=${donation.latitude},${donation.longitude}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(donation.pickupLocation)}`}"
+                       target="_blank" rel="noopener noreferrer"
+                       class="small-btn small-btn-secondary" style="font-size:11px;text-decoration:none;display:inline-flex;align-items:center;gap:4px;padding:4px 10px;">
+                        🗺️ View in Google Maps ↗
+                    </a>
+                </div>
             </div>
             <div class="detail-cell">
                 <span class="detail-label">Prepared Date</span>
-                <strong class="detail-val">📅 ${formatDate(donation.preparedDate)}</strong>
+                <strong class="detail-val">📅 ${preparedFormatted}</strong>
             </div>
             <div class="detail-cell">
-                <span class="detail-label">Best Before</span>
-                <strong class="detail-val">⏰ ${formatDate(donation.expiryDate)}</strong>
+                <span class="detail-label">Best Before / Expiry</span>
+                <strong class="detail-val">⏰ ${expiryFormatted}</strong>
             </div>
             <div class="detail-cell">
                 <span class="detail-label">Donor</span>
@@ -2006,7 +2780,7 @@ function openFoodDetail(id) {
         </div>
 
         <div class="food-detail-actions">
-            ${isNGO && donation.status === "Available" ? `
+            ${isNGO && donation.status === "Available" && !donation.isExpired ? `
                 <button class="btn btn-primary" onclick="acceptDonation(${donation.id})">
                     🤝 Accept Food Donation
                 </button>
@@ -2190,22 +2964,16 @@ function showToast(message) {
 
 function formatDate(dateString) {
     if (!dateString) return "-";
-    const parts = dateString.split("-");
-    if (parts.length === 3) {
-        const d = new Date(parts[0], parts[1] - 1, parts[2]);
-        return d.toLocaleDateString("en-US", {
-            day: "numeric",
-            month: "short",
-            year: "numeric"
-        });
+    if (window.ShareBiteDateUtils) {
+        return window.ShareBiteDateUtils.formatDateToDisplay(dateString);
     }
-    const date = new Date(dateString);
-    if (isNaN(date.getTime())) return dateString;
-    return date.toLocaleDateString("en-US", {
-        day: "numeric",
-        month: "short",
-        year: "numeric"
-    });
+    const str = String(dateString).trim();
+    if (str.includes("/")) return str;
+    const parts = str.split("-");
+    if (parts.length === 3) {
+        return `${parts[2].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[0]}`;
+    }
+    return str;
 }
 
 function escapeHTML(value) {

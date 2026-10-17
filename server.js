@@ -24,6 +24,7 @@ try {
 }
 
 const db = require('./db.js');
+const dateUtils = require('./dateUtils.js');
 
 const PORT = process.env.PORT || 3000;
 
@@ -38,7 +39,15 @@ const MIME_TYPES = {
     '.svg': 'image/svg+xml',
     '.ico': 'image/x-icon',
     '.mp4': 'video/mp4',
-    '.webm': 'video/webm'
+};
+
+const DEFAULT_CATEGORY_IMAGES = {
+    'Cooked Food': 'https://images.unsplash.com/photo-1547592180-85f173990554?auto=format&fit=crop&w=800&q=80',
+    'Packaged Food': 'https://images.unsplash.com/photo-1588964895597-cfccd6e2dbf9?auto=format&fit=crop&w=800&q=80',
+    'Fruits': 'https://images.unsplash.com/photo-1619566636858-adf3ef46400b?auto=format&fit=crop&w=800&q=80',
+    'Vegetables': 'https://images.unsplash.com/photo-1540420773420-3366772f4999?auto=format&fit=crop&w=800&q=80',
+    'Bakery Items': 'https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=800&q=80',
+    'Dairy Products': 'https://images.unsplash.com/photo-1563636619-e9143da7973b?auto=format&fit=crop&w=800&q=80'
 };
 
 // -------------------------------------------------------------
@@ -118,6 +127,12 @@ function reloadEnvConfig() {
 function getGroqApiKey() {
     reloadEnvConfig();
     const key = process.env.GROQ_API_KEY || db.getSetting('groq_api_key');
+    return (key && key.trim()) ? key.trim() : null;
+}
+
+function getGoogleMapsApiKey() {
+    reloadEnvConfig();
+    const key = process.env.GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAP_API_KEY || db.getSetting('google_maps_api_key');
     return (key && key.trim()) ? key.trim() : null;
 }
 
@@ -265,7 +280,7 @@ async function analyzeFoodImageWithGroq(imageBase64, apiKey) {
 // -------------------------------------------------------------
 // Server Request Handler
 // -------------------------------------------------------------
-const server = http.createServer(async (req, res) => {
+async function requestHandler(req, res) {
     // Handle CORS preflight
     if (req.method === 'OPTIONS') {
         res.writeHead(204, {
@@ -360,6 +375,32 @@ const server = http.createServer(async (req, res) => {
                 });
             }
 
+            // POST /api/auth/social (Google / Apple account sign in)
+            if (pathname === '/api/auth/social' && method === 'POST') {
+                const body = await readJsonBody(req);
+                const { provider, name, email, role } = body;
+
+                if (!email || typeof email !== 'string' || !email.includes('@')) {
+                    return sendError(res, 400, 'A valid email address is required.');
+                }
+
+                const cleanRole = role === 'ngo' ? 'ngo' : 'donor';
+                const cleanName = (name && typeof name === 'string' && name.trim()) ? name.trim() : email.split('@')[0];
+                const user = db.findOrCreateOAuthUser(cleanName, email, cleanRole);
+                const token = db.createSession(user.id);
+
+                return sendJson(res, 200, {
+                    user: {
+                        id: user.id,
+                        name: user.name,
+                        email: user.email,
+                        role: user.role
+                    },
+                    token,
+                    provider: provider || 'social'
+                });
+            }
+
             // POST /api/auth/logout
             if (pathname === '/api/auth/logout' && method === 'POST') {
                 const authHeader = req.headers['authorization'];
@@ -421,37 +462,67 @@ const server = http.createServer(async (req, res) => {
                 }
 
                 const body = await readJsonBody(req);
-                const { foodName, foodType, quantity, preparedDate, expiryDate, pickupLocation, description, image, priority } = body;
+                const { foodName, foodType, quantity, preparedDate, expiryDate, pickupLocation, latitude, longitude, description, image } = body;
 
-                if (!image || typeof image !== 'string' || !image.startsWith('data:image/')) {
-                    return sendError(res, 400, 'Uploading a verified food image is mandatory. Please upload an image of the food you want to donate.');
+                // Strict validation: Food Photo is mandatory and compulsory
+                if (!image || typeof image !== 'string' || (!image.startsWith('data:image/') && !image.startsWith('http://') && !image.startsWith('https://'))) {
+                    return sendError(res, 400, 'A valid food photo is required. Please upload an image of the food (JPG, JPEG, PNG, or WebP).');
                 }
 
-                if (!foodName || !foodType || !quantity || !preparedDate || !expiryDate || !pickupLocation) {
-                    return sendError(res, 400, 'Please complete all required fields.');
+                if (!foodName || !foodName.trim()) {
+                    return sendError(res, 400, 'Food name is required.');
                 }
-
-                if (Number(quantity) <= 0 || isNaN(Number(quantity))) {
+                if (!foodType) {
+                    return sendError(res, 400, 'Food category is required.');
+                }
+                const numQuantity = Number(quantity);
+                if (!numQuantity || isNaN(numQuantity) || numQuantity <= 0) {
                     return sendError(res, 400, 'Quantity must be a positive number.');
                 }
+                if (!pickupLocation || !pickupLocation.trim()) {
+                    return sendError(res, 400, 'Pickup location is required.');
+                }
 
-                if (new Date(expiryDate) < new Date(preparedDate)) {
+                // Mandatory Expiry Date validation (DD/MM/YYYY or ISO)
+                if (!expiryDate || typeof expiryDate !== 'string') {
+                    return sendError(res, 400, 'Expiry date is required.');
+                }
+                const parsedExpiry = dateUtils.parseDateInput(expiryDate);
+                if (!parsedExpiry.valid) {
+                    return sendError(res, 400, parsedExpiry.error || 'Invalid expiry date format. Please use DD/MM/YYYY.');
+                }
+
+                // Prepared Date validation
+                if (!preparedDate || typeof preparedDate !== 'string') {
+                    return sendError(res, 400, 'Prepared date is required.');
+                }
+                const parsedPrepared = dateUtils.parseDateInput(preparedDate);
+                if (!parsedPrepared.valid) {
+                    return sendError(res, 400, parsedPrepared.error || 'Invalid prepared date format. Please use DD/MM/YYYY.');
+                }
+                if (parsedExpiry.iso < parsedPrepared.iso) {
                     return sendError(res, 400, 'Expiry date cannot be before prepared date.');
                 }
 
-                const donation = db.createDonation({
-                    foodName: foodName.trim(),
-                    foodType,
-                    quantity: Number(quantity),
-                    preparedDate,
-                    expiryDate,
-                    pickupLocation: pickupLocation.trim(),
-                    description: description ? description.trim() : '',
-                    image,
-                    priority: priority || 'Medium'
-                }, user);
+                try {
+                    // Backend calculates priority exclusively from expiry date
+                    const donation = db.createDonation({
+                        foodName: foodName.trim(),
+                        foodType,
+                        quantity: numQuantity,
+                        preparedDate: parsedPrepared.iso,
+                        expiryDate: parsedExpiry.iso,
+                        pickupLocation: pickupLocation.trim(),
+                        latitude: latitude !== undefined && latitude !== null && !isNaN(Number(latitude)) ? Number(latitude) : null,
+                        longitude: longitude !== undefined && longitude !== null && !isNaN(Number(longitude)) ? Number(longitude) : null,
+                        description: description ? description.trim() : '',
+                        image
+                    }, user);
 
-                return sendJson(res, 201, donation);
+                    return sendJson(res, 201, donation);
+                } catch (err) {
+                    return sendError(res, 400, err.message);
+                }
             }
 
             // POST /api/donations/:id/accept (Accept donation - NGO)
@@ -572,6 +643,43 @@ const server = http.createServer(async (req, res) => {
                 return sendJson(res, 200, { success: true, message: 'Groq API key cleared.' });
             }
 
+            // GET /api/config/maps (Fetch configured Google Maps API key)
+            if (pathname === '/api/config/maps' && method === 'GET') {
+                const mapsKey = getGoogleMapsApiKey();
+                return sendJson(res, 200, {
+                    hasKey: Boolean(mapsKey),
+                    key: mapsKey || '',
+                    keyPreview: mapsKey ? `${mapsKey.slice(0, 6)}...${mapsKey.slice(-4)}` : null
+                });
+            }
+
+            // POST /api/config/maps (Save Google Maps API key)
+            if (pathname === '/api/config/maps' && method === 'POST') {
+                const body = await readJsonBody(req);
+                const { apiKey } = body;
+                if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length < 8) {
+                    return sendError(res, 400, 'Please provide a valid Google Maps API key.');
+                }
+                const cleanedKey = apiKey.trim();
+                process.env.GOOGLE_MAPS_API_KEY = cleanedKey;
+                db.setSetting('google_maps_api_key', cleanedKey);
+                try {
+                    const envPath = path.join(__dirname, '.env');
+                    let content = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
+                    if (content.includes('GOOGLE_MAPS_API_KEY=')) {
+                        content = content.replace(/GOOGLE_MAPS_API_KEY=.*/, `GOOGLE_MAPS_API_KEY="${cleanedKey}"`);
+                    } else {
+                        content += `\nGOOGLE_MAPS_API_KEY="${cleanedKey}"\n`;
+                    }
+                    fs.writeFileSync(envPath, content, 'utf8');
+                } catch {}
+                return sendJson(res, 200, {
+                    success: true,
+                    message: 'Google Maps API key saved! 🗺️',
+                    keyPreview: `${cleanedKey.slice(0, 6)}...${cleanedKey.slice(-4)}`
+                });
+            }
+
             // POST /api/ai/analyze-image (Real AI Food Vision Inspection via Groq)
             if (pathname === '/api/ai/analyze-image' && method === 'POST') {
                 const body = await readJsonBody(req);
@@ -673,12 +781,32 @@ const server = http.createServer(async (req, res) => {
             fs.createReadStream(filePath).pipe(res);
         }
     });
-});
+}
 
-server.listen(PORT, () => {
-    console.log(`\n======================================================`);
-    console.log(`  🍃 ShareBite Full-Stack Web Application`);
-    console.log(`  🌐 Server running at: http://localhost:${PORT}`);
-    console.log(`  📦 SQLite Database: foodshare.db`);
-    console.log(`======================================================\n`);
-});
+const server = http.createServer(requestHandler);
+
+function startServer(port) {
+    server.once('error', (err) => {
+        if (err.code === 'EADDRINUSE') {
+            console.warn(`⚠️ Port ${port} is currently busy. Trying port ${Number(port) + 1}...`);
+            startServer(Number(port) + 1);
+        } else {
+            console.error('Server error:', err);
+        }
+    });
+
+    server.listen(port, () => {
+        console.log(`\n======================================================`);
+        console.log(`  🍃 ShareBite Full-Stack Web Application`);
+        console.log(`  🌐 Server running at: http://localhost:${port}`);
+        console.log(`  📦 SQLite Database: foodshare.db`);
+        console.log(`======================================================\n`);
+    });
+}
+
+if (!process.env.VERCEL) {
+    startServer(PORT);
+}
+
+module.exports = requestHandler;
+

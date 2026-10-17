@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "functions": {
+    "api/*.js": {
+      "includeFiles": "foodshare.db"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api"
+    }
+  ]
+}
+
