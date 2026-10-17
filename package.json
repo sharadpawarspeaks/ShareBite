@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "test": "node tests/test_scenarios.js"
+    "test": "node tests/test_scenarios.js && node tests/test_forgot_password.js"
   },
   "engines": {
     "node": ">=22.x"

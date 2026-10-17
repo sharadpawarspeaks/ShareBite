@@ -114,10 +114,28 @@ function initSchema() {
             value TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS password_resets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            email TEXT NOT NULL,
+            otp_hash TEXT NOT NULL,
+            otp_expires_at TEXT NOT NULL,
+            failed_attempts INTEGER NOT NULL DEFAULT 0,
+            resend_available_at TEXT NOT NULL,
+            is_verified INTEGER NOT NULL DEFAULT 0,
+            reset_token_hash TEXT,
+            reset_token_expires_at TEXT,
+            used_at TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
         CREATE INDEX IF NOT EXISTS idx_donations_status ON donations(status);
         CREATE INDEX IF NOT EXISTS idx_donations_donor ON donations(donor_email);
         CREATE INDEX IF NOT EXISTS idx_donations_accepted ON donations(accepted_by_email);
         CREATE INDEX IF NOT EXISTS idx_notifications_email ON notifications(user_email);
+        CREATE INDEX IF NOT EXISTS idx_password_resets_email ON password_resets(email);
+        CREATE INDEX IF NOT EXISTS idx_password_resets_user ON password_resets(user_id);
     `);
 
     // Ensure latitude and longitude columns exist
@@ -781,11 +799,179 @@ function resetDatabase() {
         DELETE FROM sessions;
         DELETE FROM notifications;
         DELETE FROM donations;
+        DELETE FROM password_resets;
         DELETE FROM users;
     `);
     seedInitialData();
     return { success: true };
 }
+
+// -------------------------------------------------------------
+// Password Reset Operations (Email OTP Verification)
+// -------------------------------------------------------------
+
+function hashOtp(otp) {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = crypto.pbkdf2Sync(String(otp), salt, 1000, 32, 'sha256').toString('hex');
+    return `${salt}:${hash}`;
+}
+
+function verifyOtp(otp, stored) {
+    try {
+        if (!otp || !stored || !stored.includes(':')) return false;
+        const [salt, originalHash] = stored.split(':');
+        const hash = crypto.pbkdf2Sync(String(otp), salt, 1000, 32, 'sha256').toString('hex');
+        const hashBuf = Buffer.from(hash, 'hex');
+        const origBuf = Buffer.from(originalHash, 'hex');
+        if (hashBuf.length !== origBuf.length) return false;
+        return crypto.timingSafeEqual(hashBuf, origBuf);
+    } catch {
+        return false;
+    }
+}
+
+function hashToken(token) {
+    if (!token) return '';
+    return crypto.createHash('sha256').update(String(token)).digest('hex');
+}
+
+function createPasswordResetRequest(user, otp) {
+    if (!user || !otp) {
+        throw new Error('User and OTP are required.');
+    }
+
+    // Invalidate prior pending OTP requests for this user
+    db.prepare(`
+        UPDATE password_resets
+        SET used_at = datetime('now')
+        WHERE user_id = ? AND used_at IS NULL;
+    `).run(user.id);
+
+    const otpHash = hashOtp(otp);
+    const now = Date.now();
+    const otpExpiresAt = new Date(now + 5 * 60 * 1000).toISOString(); // 5 minutes
+    const resendAvailableAt = new Date(now + 60 * 1000).toISOString(); // 60 seconds
+
+    const info = db.prepare(`
+        INSERT INTO password_resets (
+            user_id, email, otp_hash, otp_expires_at, failed_attempts,
+            resend_available_at, is_verified, created_at
+        ) VALUES (?, ?, ?, ?, 0, ?, 0, datetime('now'));
+    `).run(user.id, user.email.toLowerCase(), otpHash, otpExpiresAt, resendAvailableAt);
+
+    return {
+        id: info.lastInsertRowid,
+        userId: user.id,
+        email: user.email.toLowerCase(),
+        otpExpiresAt,
+        resendAvailableAt
+    };
+}
+
+function getLatestActiveResetRequest(email) {
+    if (!email) return null;
+    return db.prepare(`
+        SELECT * FROM password_resets
+        WHERE LOWER(email) = LOWER(?) AND used_at IS NULL
+        ORDER BY id DESC LIMIT 1;
+    `).get(email.trim());
+}
+
+function getRecentResetRequestsCount(email, withinHours = 1) {
+    if (!email) return 0;
+    const row = db.prepare(`
+        SELECT COUNT(*) as count FROM password_resets
+        WHERE LOWER(email) = LOWER(?)
+          AND created_at >= datetime('now', '-' || ? || ' hours');
+    `).get(email.trim(), withinHours);
+    return row ? Number(row.count) : 0;
+}
+
+function recordFailedOtpAttempt(requestId) {
+    db.prepare(`
+        UPDATE password_resets
+        SET failed_attempts = failed_attempts + 1
+        WHERE id = ?;
+    `).run(requestId);
+    return db.prepare('SELECT * FROM password_resets WHERE id = ?;').get(requestId);
+}
+
+function markOtpVerified(requestId, resetTokenHash, tokenExpiresAt) {
+    db.prepare(`
+        UPDATE password_resets
+        SET is_verified = 1,
+            reset_token_hash = ?,
+            reset_token_expires_at = ?
+        WHERE id = ?;
+    `).run(resetTokenHash, tokenExpiresAt, requestId);
+}
+
+function getValidResetRecordByToken(email, resetToken) {
+    if (!email || !resetToken) return null;
+    const tokenHash = hashToken(resetToken);
+    return db.prepare(`
+        SELECT * FROM password_resets
+        WHERE LOWER(email) = LOWER(?)
+          AND reset_token_hash = ?
+          AND is_verified = 1
+          AND used_at IS NULL
+        ORDER BY id DESC LIMIT 1;
+    `).get(email.trim(), tokenHash);
+}
+
+function completePasswordReset(userId, requestId, newPassword) {
+    const newHash = hashPassword(newPassword);
+
+    // Update the user's password securely
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?;').run(newHash, userId);
+
+    // Consume this reset request and invalidate any remaining open requests for this user
+    db.prepare(`
+        UPDATE password_resets
+        SET used_at = datetime('now')
+        WHERE user_id = ? AND used_at IS NULL;
+    `).run(userId);
+
+    // Revoke all active sessions for this user (logs out previous logins)
+    db.prepare('DELETE FROM sessions WHERE user_id = ?;').run(userId);
+
+    // Add security audit notification
+    const user = getUserById(userId);
+    if (user) {
+        try {
+            db.prepare(`
+                INSERT INTO notifications (user_email, role, title, message, created_at)
+                VALUES (?, ?, ?, ?, datetime('now'));
+            `).run(
+                user.email,
+                user.role,
+                'Security Alert: Password Changed 🔒',
+                'Your ShareBite account password was recently reset. All previous sessions have been signed out. If you did not make this change, please contact support immediately.'
+            );
+        } catch (e) {}
+    }
+
+    return { success: true };
+}
+
+function revokeAllSessionsForUser(userId) {
+    db.prepare('DELETE FROM sessions WHERE user_id = ?;').run(userId);
+    return { success: true };
+}
+
+function expireResetRequestForTesting(requestId) {
+    const past = new Date(Date.now() - 1000 * 60 * 10).toISOString();
+    db.prepare('UPDATE password_resets SET otp_expires_at = ? WHERE id = ?;').run(past, requestId);
+}
+
+function clearPasswordResetsForTesting() {
+    db.prepare('DELETE FROM password_resets;').run();
+}
+
+// Clean up expired reset requests older than 24 hours
+try {
+    db.prepare("DELETE FROM password_resets WHERE created_at < datetime('now', '-24 hours');").run();
+} catch (e) {}
 
 // Initialize tables on startup
 initSchema();
@@ -811,5 +997,19 @@ module.exports = {
     clearNotifications,
     getSetting,
     setSetting,
-    resetDatabase
+    resetDatabase,
+    // Password reset functions
+    hashOtp,
+    verifyOtp,
+    hashToken,
+    createPasswordResetRequest,
+    getLatestActiveResetRequest,
+    getRecentResetRequestsCount,
+    recordFailedOtpAttempt,
+    markOtpVerified,
+    getValidResetRecordByToken,
+    completePasswordReset,
+    revokeAllSessionsForUser,
+    expireResetRequestForTesting,
+    clearPasswordResetsForTesting
 };

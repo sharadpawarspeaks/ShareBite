@@ -842,14 +842,350 @@ function socialLogin(provider) {
 }
 
 
-function forgotPassword() {
-    const email = document.getElementById("authEmail").value.trim();
-    if (email) {
-        showToast(`Password reset link sent to ${email} 📧`);
-    } else {
-        showToast("Please enter your email above, then click 'Forgot password?'");
+/* ================= FORGOT PASSWORD & EMAIL OTP FLOW ================= */
+
+const fpState = {
+    email: '',
+    resetToken: '',
+    expiresAt: 0,
+    expiryInterval: null,
+    cooldownInterval: null,
+    cooldownSeconds: 0
+};
+
+function openForgotPasswordModal(prefillEmail = '') {
+    closeModal('roleModal');
+    const modal = document.getElementById('forgotPasswordModal');
+    if (!modal) return;
+
+    // Reset state and banners
+    showFpBanner('', '');
+    const emailInput = document.getElementById('fpEmailInput');
+    const email = prefillEmail || document.getElementById('authEmail')?.value?.trim() || '';
+    if (emailInput) {
+        emailInput.value = email;
+    }
+
+    switchFpStep('email');
+    modal.classList.remove('hidden');
+    if (emailInput && !email) {
+        setTimeout(() => emailInput.focus(), 150);
     }
 }
+
+function forgotPassword() {
+    const currentTyped = document.getElementById('authEmail')?.value?.trim() || '';
+    openForgotPasswordModal(currentTyped);
+}
+
+function returnToLoginModal() {
+    closeModal('forgotPasswordModal');
+    stopFpTimers();
+
+    // If reset succeeded, prefill the email in login modal
+    if (fpState.email) {
+        const loginEmail = document.getElementById('authEmail');
+        if (loginEmail) loginEmail.value = fpState.email;
+    }
+
+    openRoleModal(currentRole || 'donor');
+    switchAuth('login');
+}
+
+function switchFpStep(step) {
+    showFpBanner('', '');
+
+    const stepEmail = document.getElementById('fpStepEmail');
+    const stepOtp = document.getElementById('fpStepOtp');
+    const stepReset = document.getElementById('fpStepReset');
+    const stepSuccess = document.getElementById('fpStepSuccess');
+
+    if (stepEmail) stepEmail.classList.toggle('hidden', step !== 'email');
+    if (stepOtp) stepOtp.classList.toggle('hidden', step !== 'otp');
+    if (stepReset) stepReset.classList.toggle('hidden', step !== 'reset');
+    if (stepSuccess) stepSuccess.classList.toggle('hidden', step !== 'success');
+
+    if (step === 'email') {
+        stopFpTimers();
+        setTimeout(() => document.getElementById('fpEmailInput')?.focus(), 100);
+    } else if (step === 'otp') {
+        const otpInput = document.getElementById('fpOtpInput');
+        if (otpInput) {
+            otpInput.value = '';
+            setTimeout(() => otpInput.focus(), 100);
+        }
+    } else if (step === 'reset') {
+        stopFpTimers();
+        const newPass = document.getElementById('fpNewPassword');
+        const confirmPass = document.getElementById('fpConfirmPassword');
+        if (newPass) newPass.value = '';
+        if (confirmPass) confirmPass.value = '';
+        setTimeout(() => newPass?.focus(), 100);
+    }
+}
+
+function showFpBanner(message, type = 'error') {
+    const banner = document.getElementById('fpStatusBanner');
+    if (!banner) return;
+    if (!message) {
+        banner.style.display = 'none';
+        banner.className = 'fp-status-banner';
+        banner.textContent = '';
+        return;
+    }
+    banner.textContent = message;
+    banner.className = `fp-status-banner ${type}`;
+    banner.style.display = 'block';
+}
+
+function stopFpTimers() {
+    if (fpState.expiryInterval) {
+        clearInterval(fpState.expiryInterval);
+        fpState.expiryInterval = null;
+    }
+    if (fpState.cooldownInterval) {
+        clearInterval(fpState.cooldownInterval);
+        fpState.cooldownInterval = null;
+    }
+}
+
+function startOtpCountdown(durationSeconds = 300) {
+    if (fpState.expiryInterval) clearInterval(fpState.expiryInterval);
+    fpState.expiresAt = Date.now() + durationSeconds * 1000;
+
+    const display = document.getElementById('fpTimerDisplay');
+    const badge = document.getElementById('fpTimerBadge');
+
+    function update() {
+        const remainingMs = fpState.expiresAt - Date.now();
+        if (remainingMs <= 0) {
+            if (display) display.textContent = '00:00 (Expired)';
+            if (badge) badge.style.color = '#ef4444';
+            clearInterval(fpState.expiryInterval);
+            fpState.expiryInterval = null;
+            showFpBanner('Your verification code has expired. Please click "Resend Code".', 'error');
+            return;
+        }
+
+        const totalSec = Math.floor(remainingMs / 1000);
+        const mins = String(Math.floor(totalSec / 60)).padStart(2, '0');
+        const secs = String(totalSec % 60).padStart(2, '0');
+        if (display) display.textContent = `${mins}:${secs}`;
+    }
+
+    update();
+    fpState.expiryInterval = setInterval(update, 1000);
+}
+
+function startResendCooldown(seconds = 60) {
+    if (fpState.cooldownInterval) clearInterval(fpState.cooldownInterval);
+    fpState.cooldownSeconds = seconds;
+
+    const resendBtn = document.getElementById('fpResendOtpBtn');
+    if (!resendBtn) return;
+    resendBtn.disabled = true;
+
+    function update() {
+        if (fpState.cooldownSeconds <= 0) {
+            resendBtn.disabled = false;
+            resendBtn.textContent = 'Resend Code';
+            clearInterval(fpState.cooldownInterval);
+            fpState.cooldownInterval = null;
+            return;
+        }
+        resendBtn.textContent = `Resend Code (${fpState.cooldownSeconds}s)`;
+        fpState.cooldownSeconds--;
+    }
+
+    update();
+    fpState.cooldownInterval = setInterval(update, 1000);
+}
+
+async function submitForgotPasswordEmail() {
+    const emailInput = document.getElementById('fpEmailInput');
+    const sendBtn = document.getElementById('fpSendOtpBtn');
+    const email = emailInput?.value?.trim() || '';
+
+    if (!email || !email.includes('@')) {
+        showFpBanner('Please enter a valid email address.', 'error');
+        emailInput?.focus();
+        return;
+    }
+
+    showFpBanner('', '');
+    const originalText = sendBtn.innerHTML;
+    sendBtn.disabled = true;
+    sendBtn.innerHTML = 'Sending Code... ⏳';
+
+    try {
+        const res = await API.post('/auth/forgot-password', { email });
+        fpState.email = email;
+
+        const targetDisplay = document.getElementById('fpTargetEmailDisplay');
+        if (targetDisplay) targetDisplay.textContent = email;
+
+        switchFpStep('otp');
+        showFpBanner(res.message || 'Verification code sent! Please check your email.', 'success');
+        startOtpCountdown(res.expiresInSeconds || 300);
+        startResendCooldown(res.cooldownSeconds || 60);
+        showToast('6-digit verification code sent! 📧');
+    } catch (err) {
+        showFpBanner(err.message || 'Unable to request code. Please try again.', 'error');
+    } finally {
+        sendBtn.disabled = false;
+        sendBtn.innerHTML = originalText;
+    }
+}
+
+async function submitVerifyOtp() {
+    const otpInput = document.getElementById('fpOtpInput');
+    const verifyBtn = document.getElementById('fpVerifyOtpBtn');
+    const otp = otpInput?.value?.trim() || '';
+
+    if (!otp || !/^\d{6}$/.test(otp)) {
+        showFpBanner('Please enter the full 6-digit verification code.', 'error');
+        otpInput?.focus();
+        return;
+    }
+
+    showFpBanner('', '');
+    const originalText = verifyBtn.innerHTML;
+    verifyBtn.disabled = true;
+    verifyBtn.innerHTML = 'Verifying... ⏳';
+
+    try {
+        const res = await API.post('/auth/verify-otp', {
+            email: fpState.email,
+            otp
+        });
+
+        fpState.resetToken = res.resetToken;
+        stopFpTimers();
+        switchFpStep('reset');
+        showToast('Code verified successfully! 🛡️');
+    } catch (err) {
+        showFpBanner(err.message || 'Invalid or expired verification code.', 'error');
+        otpInput?.focus();
+    } finally {
+        verifyBtn.disabled = false;
+        verifyBtn.innerHTML = originalText;
+    }
+}
+
+async function resendOtpCode() {
+    const resendBtn = document.getElementById('fpResendOtpBtn');
+    if (!fpState.email) {
+        switchFpStep('email');
+        return;
+    }
+
+    resendBtn.disabled = true;
+    resendBtn.textContent = 'Sending...';
+
+    try {
+        const res = await API.post('/auth/forgot-password', { email: fpState.email });
+        showFpBanner('A fresh verification code has been dispatched to your email.', 'success');
+        const otpInput = document.getElementById('fpOtpInput');
+        if (otpInput) {
+            otpInput.value = '';
+            otpInput.focus();
+        }
+        startOtpCountdown(res.expiresInSeconds || 300);
+        startResendCooldown(res.cooldownSeconds || 60);
+        showToast('New verification code sent! 📧');
+    } catch (err) {
+        showFpBanner(err.message || 'Could not resend code. Please try again.', 'error');
+        startResendCooldown(30);
+    }
+}
+
+async function submitPasswordReset() {
+    const newPassInput = document.getElementById('fpNewPassword');
+    const confirmPassInput = document.getElementById('fpConfirmPassword');
+    const submitBtn = document.getElementById('fpResetSubmitBtn');
+
+    const newPassword = newPassInput?.value || '';
+    const confirmPassword = confirmPassInput?.value || '';
+
+    if (!newPassword || !confirmPassword) {
+        showFpBanner('Please enter and confirm your new password.', 'error');
+        return;
+    }
+
+    if (newPassword.length < 8) {
+        showFpBanner('Password must be at least 8 characters long.', 'error');
+        newPassInput?.focus();
+        return;
+    }
+
+    if (newPassword !== confirmPassword) {
+        showFpBanner('Passwords do not match. Please verify.', 'error');
+        confirmPassInput?.focus();
+        return;
+    }
+
+    showFpBanner('', '');
+    const originalText = submitBtn.innerHTML;
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = 'Updating Password... ⏳';
+
+    try {
+        await API.post('/auth/reset-password', {
+            email: fpState.email,
+            resetToken: fpState.resetToken,
+            newPassword,
+            confirmPassword
+        });
+
+        switchFpStep('success');
+        showToast('Password reset successfully! 🎉');
+    } catch (err) {
+        showFpBanner(err.message || 'Failed to reset password. Please start over.', 'error');
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalText;
+    }
+}
+
+// Auto-advance and digit-only filter on OTP input field
+document.addEventListener('DOMContentLoaded', () => {
+    const otpInput = document.getElementById('fpOtpInput');
+    if (otpInput) {
+        otpInput.addEventListener('input', (e) => {
+            e.target.value = e.target.value.replace(/[^0-9]/g, '').slice(0, 6);
+            if (e.target.value.length === 6) {
+                // Auto trigger verification when 6 digits entered
+                submitVerifyOtp();
+            }
+        });
+        otpInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                submitVerifyOtp();
+            }
+        });
+    }
+
+    const emailInput = document.getElementById('fpEmailInput');
+    if (emailInput) {
+        emailInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                submitForgotPasswordEmail();
+            }
+        });
+    }
+
+    const confirmPass = document.getElementById('fpConfirmPassword');
+    if (confirmPass) {
+        confirmPass.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                submitPasswordReset();
+            }
+        });
+    }
+});
 
 
 /* ================= 1-CLICK DEMO LOGIN ================= */

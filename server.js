@@ -25,6 +25,8 @@ try {
 
 const db = require('./db.js');
 const dateUtils = require('./dateUtils.js');
+const crypto = require('node:crypto');
+const emailService = require('./emailService.js');
 
 const PORT = process.env.PORT || 3000;
 
@@ -418,6 +420,166 @@ async function requestHandler(req, res) {
                     return sendError(res, 401, 'Unauthorized');
                 }
                 return sendJson(res, 200, { user });
+            }
+
+            // POST /api/auth/forgot-password (Request Password Reset OTP)
+            if (pathname === '/api/auth/forgot-password' && method === 'POST') {
+                const body = await readJsonBody(req);
+                const { email } = body;
+
+                if (!email || typeof email !== 'string' || !email.includes('@')) {
+                    return sendError(res, 400, 'Please provide a valid email address.');
+                }
+
+                const cleanEmail = email.trim().toLowerCase();
+
+                // 1. Check Hourly Rate Limit (max 5 requests per email per hour)
+                const recentRequestsCount = db.getRecentResetRequestsCount(cleanEmail, 1);
+                if (recentRequestsCount >= 5) {
+                    return sendJson(res, 429, {
+                        error: 'Too many password reset requests for this email. Please try again after 1 hour.',
+                        retryAfter: 3600
+                    });
+                }
+
+                // 2. Check Resend Cooldown (60 seconds)
+                const activeReq = db.getLatestActiveResetRequest(cleanEmail);
+                if (activeReq && activeReq.resend_available_at) {
+                    const cooldownRemainingMs = new Date(activeReq.resend_available_at).getTime() - Date.now();
+                    if (cooldownRemainingMs > 0) {
+                        const remainingSec = Math.ceil(cooldownRemainingMs / 1000);
+                        return sendJson(res, 429, {
+                            error: `Please wait ${remainingSec}s before requesting another code.`,
+                            retryAfter: remainingSec
+                        });
+                    }
+                }
+
+                // 3. User lookup - Always return generic message to prevent account enumeration
+                const user = db.getUserByEmail(cleanEmail);
+                if (user) {
+                    // Generate cryptographically secure random 6-digit OTP
+                    const otp = crypto.randomInt(100000, 1000000).toString();
+
+                    // Store hashed OTP in database
+                    db.createPasswordResetRequest(user, otp);
+
+                    // Dispatch email
+                    try {
+                        await emailService.sendPasswordResetEmail({
+                            to: user.email,
+                            userName: user.name,
+                            otp
+                        });
+                    } catch (emailErr) {
+                        console.error('[Auth] Failed to dispatch password reset email:', emailErr.message);
+                    }
+                }
+
+                // Generic response (security requirement: do not reveal whether user exists)
+                return sendJson(res, 200, {
+                    success: true,
+                    message: 'If that email address is registered, a 6-digit verification code has been sent.',
+                    expiresInSeconds: 300,
+                    cooldownSeconds: 60
+                });
+            }
+
+            // POST /api/auth/verify-otp (Verify 6-digit OTP)
+            if (pathname === '/api/auth/verify-otp' && method === 'POST') {
+                const body = await readJsonBody(req);
+                const { email, otp } = body;
+
+                if (!email || !otp) {
+                    return sendError(res, 400, 'Email and OTP verification code are required.');
+                }
+
+                const cleanEmail = email.trim().toLowerCase();
+                const cleanOtp = String(otp).trim();
+
+                if (!/^\d{6}$/.test(cleanOtp)) {
+                    return sendError(res, 400, 'Verification code must be exactly 6 digits.');
+                }
+
+                const activeReq = db.getLatestActiveResetRequest(cleanEmail);
+                if (!activeReq) {
+                    return sendError(res, 400, 'No active password reset request found. Please request a new code.');
+                }
+
+                // Check if already verified
+                if (activeReq.is_verified) {
+                    return sendError(res, 400, 'This verification code has already been used.');
+                }
+
+                // Check expiration (5 minutes)
+                if (new Date(activeReq.otp_expires_at).getTime() < Date.now()) {
+                    return sendError(res, 400, 'Verification code has expired. Please request a new code.');
+                }
+
+                // Check maximum failed attempts (max 5)
+                if (activeReq.failed_attempts >= 5) {
+                    return sendError(res, 400, 'Maximum verification attempts exceeded (5/5). Please request a new code.');
+                }
+
+                // Verify OTP hash using timing-safe comparison
+                const isValid = db.verifyOtp(cleanOtp, activeReq.otp_hash);
+                if (!isValid) {
+                    const updated = db.recordFailedOtpAttempt(activeReq.id);
+                    const remaining = Math.max(0, 5 - updated.failed_attempts);
+                    if (remaining <= 0) {
+                        return sendError(res, 400, 'Maximum verification attempts exceeded. Please request a new code.');
+                    }
+                    return sendError(res, 400, `Incorrect verification code. ${remaining} attempt${remaining === 1 ? '' : 's'} remaining.`);
+                }
+
+                // OTP is valid! Generate single-use reset authorization token (expires in 15 mins)
+                const resetToken = crypto.randomBytes(32).toString('hex');
+                const resetTokenHash = db.hashToken(resetToken);
+                const tokenExpiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+                db.markOtpVerified(activeReq.id, resetTokenHash, tokenExpiresAt);
+
+                return sendJson(res, 200, {
+                    success: true,
+                    message: 'OTP verified successfully.',
+                    resetToken
+                });
+            }
+
+            // POST /api/auth/reset-password (Set new password with authorized token)
+            if (pathname === '/api/auth/reset-password' && method === 'POST') {
+                const body = await readJsonBody(req);
+                const { email, resetToken, newPassword, confirmPassword } = body;
+
+                if (!email || !resetToken || !newPassword || !confirmPassword) {
+                    return sendError(res, 400, 'Email, reset token, and password confirmation are required.');
+                }
+
+                const cleanEmail = email.trim().toLowerCase();
+
+                if (newPassword !== confirmPassword) {
+                    return sendError(res, 400, 'Passwords do not match.');
+                }
+
+                if (newPassword.length < 8) {
+                    return sendError(res, 400, 'Password must be at least 8 characters long.');
+                }
+
+                const resetRecord = db.getValidResetRecordByToken(cleanEmail, resetToken);
+                if (!resetRecord) {
+                    return sendError(res, 400, 'Invalid or expired password reset authorization. Please start over.');
+                }
+
+                if (new Date(resetRecord.reset_token_expires_at).getTime() < Date.now()) {
+                    return sendError(res, 400, 'Password reset session has expired (15 minute limit). Please start over.');
+                }
+
+                db.completePasswordReset(resetRecord.user_id, resetRecord.id, newPassword);
+
+                return sendJson(res, 200, {
+                    success: true,
+                    message: 'Your password has been successfully reset! Please sign in with your new password.'
+                });
             }
 
             // GET /api/donations
