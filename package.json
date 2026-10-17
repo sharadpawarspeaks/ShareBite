@@ -11,7 +11,17 @@
   "engines": {
     "node": ">=22.x"
   },
-  "keywords": ["food-donation", "ngo", "zero-waste", "full-stack", "sqlite"],
+  "keywords": [
+    "food-donation",
+    "ngo",
+    "zero-waste",
+    "full-stack",
+    "sqlite"
+  ],
   "author": "ShareBite Team",
-  "license": "ISC"
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^18.0.8",
+    "resend": "^6.34.1"
+  }
 }

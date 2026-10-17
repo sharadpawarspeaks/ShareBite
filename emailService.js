@@ -1,19 +1,37 @@
-const https = require('node:https');
-const http = require('node:http');
+const { Resend } = require('resend');
 
 /**
  * ShareBite Transactional Email Service
  * 
+ * Powered by the official Resend Node.js SDK.
  * Compatible with Vercel Serverless Functions.
- * Supports:
- *  1. Resend API (Recommended for Vercel, zero-dependency via native fetch / https)
- *  2. Generic Transactional Email API (EMAIL_API_KEY)
- *  3. SMTP (via environment variables if configured)
- *  4. Development / Test Mode (Simulated dispatch with secure test inspection hook)
  */
 
 // Memory store for test inspections ONLY (never logged or exposed outside test assertions)
 const _testSentEmails = [];
+
+/**
+ * Validate required email configuration environment variables
+ */
+function validateConfig() {
+    const apiKey = process.env.RESEND_API_KEY;
+    const from = process.env.EMAIL_FROM;
+
+    const missing = [];
+    if (!apiKey || !apiKey.trim() || apiKey.trim() === 'YOUR_RESEND_API_KEY') {
+        missing.push('RESEND_API_KEY');
+    }
+    if (!from || !from.trim()) {
+        missing.push('EMAIL_FROM');
+    }
+
+    return {
+        isValid: missing.length === 0,
+        missing,
+        apiKey: apiKey ? apiKey.trim() : null,
+        from: from ? from.trim() : null
+    };
+}
 
 /**
  * Retrieve last sent email record for an address (ONLY for automated testing)
@@ -46,7 +64,7 @@ function buildResetEmailHtml({ userName, otpCode }) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ShareBite Password Reset</title>
+  <title>ShareBite - Password Reset OTP</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f6f8; margin: 0; padding: 20px; color: #1e293b; }
     .container { max-width: 540px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }
@@ -105,25 +123,35 @@ function buildResetEmailHtml({ userName, otpCode }) {
 }
 
 /**
- * Send password reset OTP email
+ * Format sender address
+ */
+function formatFromAddress(from) {
+    if (!from) return 'ShareBite <onboarding@resend.dev>';
+    if (from.includes('<') && from.includes('>')) return from;
+    return `ShareBite <${from}>`;
+}
+
+/**
+ * Send password reset OTP email using the official Resend SDK
  * @param {Object} options
  * @param {string} options.to - Recipient email
  * @param {string} options.userName - Recipient name
  * @param {string} options.otp - 6-digit plain OTP
- * @returns {Promise<{ success: boolean, provider: string, messageId?: string }>}
+ * @param {Object} [options.overrideConfig] - Optional config override for testing
+ * @returns {Promise<{ success: boolean, provider: string, messageId?: string, error?: string }>}
  */
-async function sendPasswordResetEmail({ to, userName, otp }) {
+async function sendPasswordResetEmail({ to, userName, otp, overrideConfig = null }) {
     if (!to || !otp) {
-        throw new Error('Recipient email and OTP are required to dispatch email.');
+        throw new Error('Recipient email and OTP are required.');
     }
 
-    const apiKey = process.env.RESEND_API_KEY || process.env.EMAIL_API_KEY;
-    const fromAddress = process.env.EMAIL_FROM || 'ShareBite <onboarding@resend.dev>';
-    const subject = 'Your ShareBite Password Reset Code';
+    const config = overrideConfig || validateConfig();
+
+    const subject = 'ShareBite - Password Reset OTP';
     const textContent = `Your ShareBite password reset code is: ${otp}\n\nThis single-use code expires in 5 minutes.\nIf you did not request this, please safely ignore this email.\nNever share this code with anyone.`;
     const htmlContent = buildResetEmailHtml({ userName, otpCode: otp });
 
-    // Store in internal test store for test suites
+    // Store in internal test store for test assertions
     _testSentEmails.push({
         to,
         userName,
@@ -131,57 +159,59 @@ async function sendPasswordResetEmail({ to, userName, otp }) {
         sentAt: new Date().toISOString()
     });
 
-    // 1. If Resend / Transactional Email API Key is configured, send via REST API
-    if (apiKey && apiKey.trim()) {
-        try {
-            const payload = JSON.stringify({
-                from: fromAddress,
-                to: [to],
-                subject,
-                text: textContent,
-                html: htmlContent
-            });
+    // 1. If configuration is missing required environment variables
+    if (!config.isValid) {
+        const errorMsg = `Email configuration incomplete: Missing ${config.missing.join(', ')}`;
+        return {
+            success: false,
+            provider: 'resend',
+            error: errorMsg,
+            missing: config.missing
+        };
+    }
 
-            const response = await fetch('https://api.resend.com/emails', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${apiKey.trim()}`,
-                    'Content-Type': 'application/json'
-                },
-                body: payload
-            });
+    // 2. Dispatch using the official Resend SDK
+    try {
+        const resend = new Resend(config.apiKey);
+        const fromAddress = formatFromAddress(config.from);
 
-            if (!response.ok) {
-                const errData = await response.json().catch(() => ({}));
-                console.error('[EmailService] Resend API error response:', errData);
-                return { success: false, provider: 'resend', error: errData.message || `HTTP ${response.status}` };
-            }
+        const { data, error } = await resend.emails.send({
+            from: fromAddress,
+            to: [to],
+            subject,
+            text: textContent,
+            html: htmlContent
+        });
 
-            const data = await response.json();
-            return { success: true, provider: 'resend', messageId: data.id };
-        } catch (err) {
-            console.error('[EmailService] Failed to send via Resend API:', err.message);
-            // Fallback to local delivery success representation so users aren't locked out in mixed configs
-            return { success: true, provider: 'simulated', warning: err.message };
+        if (error) {
+            console.error('[EmailService] Resend API error:', error.message);
+            return {
+                success: false,
+                provider: 'resend',
+                error: error.message
+            };
         }
-    }
 
-    // 2. Simulated Dispatch Mode (Development / CI / No external API configured)
-    // Note: Plaintext OTP is NOT logged to console in production
-    if (process.env.NODE_ENV !== 'production') {
-        const masked = to.replace(/^(..)(.*)(@.*)$/, (_, a, b, c) => a + '*'.repeat(Math.max(1, b.length)) + c);
-        console.log(`[EmailService] Simulated dispatch: Password reset email prepared for ${masked}`);
+        return {
+            success: true,
+            provider: 'resend',
+            messageId: data ? data.id : null
+        };
+    } catch (err) {
+        console.error('[EmailService] Resend dispatch exception:', err.message);
+        return {
+            success: false,
+            provider: 'resend',
+            error: err.message
+        };
     }
-
-    return {
-        success: true,
-        provider: 'simulated'
-    };
 }
 
 module.exports = {
+    validateConfig,
     sendPasswordResetEmail,
     buildResetEmailHtml,
+    formatFromAddress,
     getLastSentEmailForTesting,
     clearTestEmails
 };
