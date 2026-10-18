@@ -575,6 +575,15 @@ function renderLandingRecentFood() {
         const daysRemainingHtml = getDaysRemainingText(donation);
         const expiryFormatted = formatDate(donation.expiryDate);
 
+        let actionBtnText = "🤝 Accept Food";
+        let actionBtnClass = "small-btn";
+        if (!currentUser) {
+            actionBtnText = "🏢 Sign In to Claim";
+        } else if (currentUser.role !== "ngo") {
+            actionBtnText = "🏢 NGO Claim Only";
+            actionBtnClass = "small-btn small-btn-secondary";
+        }
+
         return `
             <div class="donation-card" onclick="openFoodDetail(${donation.id})">
                 <img
@@ -631,11 +640,11 @@ function renderLandingRecentFood() {
                             👁️ Details
                         </button>
                         <button
-                            class="small-btn"
+                            class="${actionBtnClass}"
                             style="flex:1;justify-content:center;"
                             onclick="event.stopPropagation(); handleLandingFoodAction(${donation.id})"
                         >
-                            🤝 Accept Food
+                            ${actionBtnText}
                         </button>
                     </div>
                 </div>
@@ -3443,6 +3452,11 @@ function openFoodDetail(id) {
                     🤝 Accept Food Donation
                 </button>
             ` : ''}
+            ${!currentUser && donation.status === "Available" && !donation.isExpired ? `
+                <button class="btn btn-primary" onclick="closeModal('foodDetailModal'); openRoleModal('ngo');">
+                    🏢 Sign In to Claim Food
+                </button>
+            ` : ''}
             ${isAcceptedByCurrentNGO && donation.status === "Accepted" ? `
                 <button class="btn btn-primary" onclick="markDonationCompleted(${donation.id})">
                     ✅ Mark Picked Up & Completed
@@ -3589,6 +3603,7 @@ async function logout() {
 
     renderNavAuth();
     loadStatsFromServer();
+    renderLandingRecentFood();
 
     window.scrollTo({
         top: 0,
