@@ -7,6 +7,7 @@
 let currentRole = null;
 let authMode = "signup";
 let uploadedImageBase64 = null;
+let imageSource = null; // "camera" | "gallery" | null
 let autoSyncInterval = null;
 
 let donations = [];
@@ -63,6 +64,10 @@ const API = {
 
 
 /* ================= INITIALIZATION ================= */
+
+function setupImageUpload() {
+    updateImageActionButtons();
+}
 
 document.addEventListener("DOMContentLoaded", async function () {
     initFormDates();
@@ -230,9 +235,16 @@ async function loadStatsFromServer(showLoader = true) {
 }
 
 async function loadDonationsFromServer(updateViews = true) {
+    const recentContainer = document.getElementById("recentFoodContainer");
+    if (recentContainer && (!donations || donations.length === 0)) {
+        renderLandingLoadingSkeleton();
+    }
+
     try {
         const data = await API.get("/donations");
         donations = data;
+
+        renderLandingRecentFood();
 
         if (updateViews) {
             loadStatsFromServer(false);
@@ -251,6 +263,10 @@ async function loadDonationsFromServer(updateViews = true) {
         }
     } catch (err) {
         console.warn("Could not load donations from server:", err);
+        renderLandingError();
+        if (currentUser?.role === "ngo") {
+            renderNGOError();
+        }
     }
 }
 
@@ -290,6 +306,7 @@ function showPage(page) {
         document.getElementById("donorPage").classList.add("hidden");
         document.getElementById("ngoPage").classList.add("hidden");
         loadStatsFromServer();
+        loadDonationsFromServer(false);
         renderNavAuth();
         window.scrollTo({
             top: 0,
@@ -401,6 +418,189 @@ function renderHomeStats(stats) {
 
 function updateHomeStatsLocal() {
     loadStatsFromServer(false);
+}
+
+/* ================= LANDING PAGE RECENT FOOD LISTINGS ================= */
+
+function renderLandingLoadingSkeleton() {
+    const container = document.getElementById("recentFoodContainer");
+    if (!container) return;
+    container.innerHTML = `
+        <div class="food-skeleton-card">
+            <div class="skeleton-shimmer" style="height:150px;width:100%;"></div>
+            <div style="padding:16px;">
+                <div class="skeleton-shimmer" style="height:20px;width:65%;margin-bottom:8px;border-radius:4px;"></div>
+                <div class="skeleton-shimmer" style="height:14px;width:40%;margin-bottom:12px;border-radius:4px;"></div>
+                <div class="skeleton-shimmer" style="height:14px;width:80%;margin-bottom:6px;border-radius:4px;"></div>
+                <div class="skeleton-shimmer" style="height:14px;width:70%;border-radius:4px;"></div>
+            </div>
+        </div>
+    `.repeat(3);
+}
+
+function renderLandingRecentFood() {
+    const container = document.getElementById("recentFoodContainer");
+    const footer = document.getElementById("recentFoodFooter");
+    if (!container) return;
+
+    // Filter only genuine, eligible donations from the database:
+    // Must be Available and non-expired
+    const eligible = (donations || []).filter(donation => {
+        return donation.status === "Available" && !donation.isExpired;
+    });
+
+    // Sort: newest submitted donations first
+    eligible.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+    // Show 3 to 6 cards
+    const recent = eligible.slice(0, 6);
+
+    if (recent.length === 0) {
+        if (footer) footer.style.display = "none";
+        container.innerHTML = `
+            <div class="empty" style="grid-column: 1 / -1; max-width: 620px; margin: 0 auto; width: 100%;">
+                <div style="font-size: 42px; margin-bottom: 12px;">🥗</div>
+                <h3 style="font-size: 19px; font-weight: 700; color: var(--ink); margin: 0 0 8px 0;">No food donations available right now.</h3>
+                <p style="font-size: 14px; color: var(--muted); margin: 0 0 20px 0;">Be the first to share food with your community.</p>
+                <button class="btn btn-primary" onclick="openRoleModal('donor')">
+                    🍃 Donate Food
+                </button>
+            </div>
+        `;
+        return;
+    }
+
+    if (footer) footer.style.display = "flex";
+
+    container.innerHTML = recent.map(donation => {
+        const priorityBadgeHtml = getPriorityBadgeHTML(donation);
+        const daysRemainingHtml = getDaysRemainingText(donation);
+        const expiryFormatted = formatDate(donation.expiryDate);
+
+        return `
+            <div class="donation-card" onclick="openFoodDetail(${donation.id})">
+                <img
+                    class="donation-card-image"
+                    src="${escapeHTML(donation.image)}"
+                    alt="${escapeHTML(donation.foodName)}"
+                    loading="lazy"
+                >
+                <div class="donation-content">
+                    <div class="donation-top" style="align-items:flex-start;gap:8px;">
+                        <div>
+                            <h3 style="margin:0 0 2px 0;">${escapeHTML(donation.foodName)}</h3>
+                            <span class="muted">${escapeHTML(donation.foodType)}</span>
+                        </div>
+                        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+                            ${priorityBadgeHtml}
+                            <span class="status status-available" style="font-size:10px;padding:2px 7px;">
+                                ${escapeHTML(donation.status)}
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="meta-row">
+                        <span>Quantity</span>
+                        <strong>${donation.quantity} kg</strong>
+                    </div>
+                    <div class="meta-row">
+                        <span>Food Category</span>
+                        <strong>${escapeHTML(donation.foodType)}</strong>
+                    </div>
+                    <div class="meta-row">
+                        <span>Donor</span>
+                        <span>👤 <strong>${escapeHTML(donation.donorName || "Community Member")}</strong></span>
+                    </div>
+                    <div class="meta-row">
+                        <span>Pickup Location</span>
+                        <span>📍 ${escapeHTML(donation.pickupLocation)}</span>
+                    </div>
+                    <div class="meta-row">
+                        <span>Expiry Date</span>
+                        <strong>📅 ${expiryFormatted}</strong>
+                    </div>
+                    <div class="meta-row">
+                        <span>Shelf Life</span>
+                        <span style="font-size:11px;font-weight:600;">${daysRemainingHtml}</span>
+                    </div>
+
+                    <div style="margin-top:14px;display:flex;gap:8px;">
+                        <button
+                            class="small-btn small-btn-secondary"
+                            style="flex:1;justify-content:center;"
+                            onclick="event.stopPropagation(); openFoodDetail(${donation.id})"
+                        >
+                            👁️ Details
+                        </button>
+                        <button
+                            class="small-btn"
+                            style="flex:1;justify-content:center;"
+                            onclick="event.stopPropagation(); handleLandingFoodAction(${donation.id})"
+                        >
+                            🤝 Accept Food
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join("");
+}
+
+function handleLandingFoodAction(id) {
+    if (!currentUser) {
+        showToast("Please login as an NGO to claim surplus food donations. 🏢");
+        openRoleModal("ngo");
+        return;
+    }
+    if (currentUser.role !== "ngo") {
+        showToast("Only registered NGOs can accept and collect food donations. 🏢");
+        return;
+    }
+    acceptDonation(id);
+}
+
+function navigateToAvailableFood() {
+    if (currentUser && currentUser.role === "ngo") {
+        showNGODashboard().then(() => {
+            ngoTab("available");
+            window.scrollTo({ top: 0, behavior: "smooth" });
+        });
+    } else {
+        showToast("Access the complete Available Food discovery catalog by signing in as an NGO. 🏢");
+        openRoleModal("ngo");
+    }
+}
+
+function renderLandingError() {
+    const container = document.getElementById("recentFoodContainer");
+    const footer = document.getElementById("recentFoodFooter");
+    if (!container) return;
+    if (footer) footer.style.display = "none";
+    container.innerHTML = `
+        <div class="empty" style="grid-column: 1 / -1; max-width: 620px; margin: 0 auto; width: 100%; border-color: #fca5a5;">
+            <div style="font-size: 38px; margin-bottom: 10px;">⚠️</div>
+            <strong style="display:block;margin-bottom:6px;font-size:16px;color:#b91c1c;">Unable to connect to database</strong>
+            <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">We could not load real food donations from the server. Please check your connection and retry.</p>
+            <button class="btn btn-secondary" onclick="loadDonationsFromServer()">
+                🔄 Retry Connection
+            </button>
+        </div>
+    `;
+}
+
+function renderNGOError() {
+    const container = document.getElementById("ngoAvailableContainer");
+    if (!container) return;
+    container.innerHTML = `
+        <div class="empty" style="border-color: #fca5a5;">
+            <div style="font-size: 36px; margin-bottom: 10px;">⚠️</div>
+            <strong style="display:block;margin-bottom:6px;font-size:16px;color:#b91c1c;">Unable to load food donations</strong>
+            <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">Server connection error. Please try again.</p>
+            <button class="btn btn-secondary" onclick="loadDonationsFromServer()">
+                🔄 Retry
+            </button>
+        </div>
+    `;
 }
 
 
@@ -1184,7 +1384,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function demoLogin(role) {
     closeAllModals();
-    showToast(`Logging in as Demo ${role === "donor" ? "Donor (Sarah Jenkins)" : "NGO (Hope Shelter)"}... ⚡`);
+    showToast(`Logging in as Demo ${role === "donor" ? "Donor" : "NGO (Hope Shelter)"}... ⚡`);
 
     try {
         const res = await API.post("/auth/demo", { role });
@@ -1399,6 +1599,123 @@ function getTodayFormattedDDMMYYYY() {
     return `${dd}/${mm}/${yyyy}`;
 }
 
+function openDatePicker(fieldId) {
+    const field = document.getElementById(fieldId);
+    if (!field || field.readOnly || field.disabled) return;
+
+    const nativePicker = document.getElementById(fieldId + "Native");
+    if (!nativePicker) return;
+
+    // Convert current value (if valid) to YYYY-MM-DD so the picker opens to that date
+    if (field.value && window.ShareBiteDateUtils) {
+        const parsed = window.ShareBiteDateUtils.parseDateInput(field.value);
+        if (parsed.valid && parsed.iso) {
+            nativePicker.value = parsed.iso;
+        }
+    } else {
+        const now = new Date();
+        const y = now.getFullYear();
+        const m = String(now.getMonth() + 1).padStart(2, "0");
+        const d = String(now.getDate()).padStart(2, "0");
+        nativePicker.value = `${y}-${m}-${d}`;
+    }
+
+    if (typeof nativePicker.showPicker === "function") {
+        try {
+            nativePicker.showPicker();
+        } catch {
+            nativePicker.focus();
+        }
+    } else {
+        nativePicker.focus();
+    }
+}
+
+function handleDateInputClick(inputEl) {
+    if (!inputEl || inputEl.readOnly || inputEl.disabled) return;
+    openDatePicker(inputEl.id);
+}
+
+function syncNativeDateToField(fieldId, isoVal) {
+    if (!isoVal) return;
+    const field = document.getElementById(fieldId);
+    if (!field || field.readOnly || field.disabled) return;
+
+    if (window.ShareBiteDateUtils) {
+        const display = window.ShareBiteDateUtils.formatDateToDisplay(isoVal);
+        field.value = display;
+    } else {
+        const parts = isoVal.split("-");
+        if (parts.length === 3) {
+            field.value = `${parts[2]}/${parts[1]}/${parts[0]}`;
+        }
+    }
+
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    field.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function handleFoodTypeChange() {
+    const foodTypeEl = document.getElementById("foodType");
+    const prepInput = document.getElementById("preparedDate");
+    const expInput = document.getElementById("expiryDate");
+    const prepBtn = document.getElementById("preparedDateCalBtn");
+    const expBtn = document.getElementById("expiryDateCalBtn");
+    const prepHelp = document.getElementById("preparedDateHelp");
+    const expHelp = document.getElementById("expiryDateHelp");
+
+    if (!foodTypeEl || !prepInput || !expInput) return;
+
+    const selectedType = foodTypeEl.value;
+
+    if (selectedType === "Cooked Food") {
+        const dates = window.ShareBiteDateUtils && typeof window.ShareBiteDateUtils.getCookedFoodDates === "function"
+            ? window.ShareBiteDateUtils.getCookedFoodDates()
+            : (() => {
+                const now = new Date();
+                const tom = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+                const pDD = String(now.getDate()).padStart(2, "0");
+                const pMM = String(now.getMonth() + 1).padStart(2, "0");
+                const eDD = String(tom.getDate()).padStart(2, "0");
+                const eMM = String(tom.getMonth() + 1).padStart(2, "0");
+                return {
+                    preparedDateDisplay: `${pDD}/${pMM}/${now.getFullYear()}`,
+                    expiryDateDisplay: `${eDD}/${eMM}/${tom.getFullYear()}`
+                };
+            })();
+
+        prepInput.value = dates.preparedDateDisplay;
+        prepInput.readOnly = true;
+        prepInput.classList.add("date-readonly");
+
+        expInput.value = dates.expiryDateDisplay;
+        expInput.readOnly = true;
+        expInput.classList.add("date-readonly");
+
+        if (prepBtn) prepBtn.disabled = true;
+        if (expBtn) expBtn.disabled = true;
+
+        if (prepHelp) prepHelp.textContent = "Auto-set: Prepared today for Cooked Food (non-editable)";
+        if (expHelp) expHelp.textContent = "Auto-set: Cooked food expires in 1 day / tomorrow (non-editable)";
+
+        expInput.dispatchEvent(new Event("input", { bubbles: true }));
+    } else {
+        prepInput.readOnly = false;
+        prepInput.classList.remove("date-readonly");
+
+        expInput.readOnly = false;
+        expInput.classList.remove("date-readonly");
+
+        if (prepBtn) prepBtn.disabled = false;
+        if (expBtn) expBtn.disabled = false;
+
+        if (prepHelp) prepHelp.textContent = "Format: DD/MM/YYYY (e.g. 16/10/2026)";
+        if (expHelp) expHelp.textContent = "Format: DD/MM/YYYY (e.g. 16/10/2026)";
+
+        expInput.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+}
+
 function initFormDates() {
     const todayFormatted = getTodayFormattedDDMMYYYY();
     const preparedInput = document.getElementById("preparedDate");
@@ -1410,11 +1727,14 @@ function initFormDates() {
     if (expiryInput && !expiryInput.value) {
         expiryInput.value = "";
     }
+
+    handleFoodTypeChange();
 }
 
 function attachDateInputMask(inputEl) {
     if (!inputEl) return;
     inputEl.addEventListener("input", function () {
+        if (this.readOnly) return;
         let val = this.value.replace(/[^\d]/g, "");
         if (val.length > 8) val = val.substring(0, 8);
         if (val.length >= 5) {
@@ -1452,19 +1772,41 @@ function resetDonationForm() {
     }
 
     initFormDates();
+    handleFoodTypeChange();
 }
 
 function setupDonationForm() {
     const form = document.getElementById("donationForm");
     if (!form) return;
 
+    // Completely prevent browser native form submission and reload
+    form.onsubmit = function (e) {
+        if (e) e.preventDefault();
+        return false;
+    };
+
     const prepInput = document.getElementById("preparedDate");
     const expInput = document.getElementById("expiryDate");
-    attachDateInputMask(prepInput);
-    attachDateInputMask(expInput);
+    if (prepInput) attachDateInputMask(prepInput);
+    if (expInput) attachDateInputMask(expInput);
+
+    const foodTypeEl = document.getElementById("foodType");
+    if (foodTypeEl) {
+        foodTypeEl.addEventListener("change", handleFoodTypeChange);
+    }
+    handleFoodTypeChange();
 
     form.addEventListener("submit", async function (event) {
-        event.preventDefault();
+        if (event) event.preventDefault();
+
+        if (!currentUser) {
+            try {
+                currentUser = JSON.parse(localStorage.getItem("foodshareCurrentUser") || "null");
+            } catch {}
+        }
+        if (!authToken) {
+            authToken = localStorage.getItem("foodshareToken") || null;
+        }
 
         if (!currentUser) {
             showToast("Please login first.");
@@ -1737,26 +2079,17 @@ function setupDonorMapPicker() {
     donorMap = L.map("maptilerMapPicker").setView(initialCenter, 13);
 
     const maptilerKey = mapConfigCache?.maptilerKey;
-    const badge = document.getElementById("mapLoadedBadge");
 
     if (maptilerKey) {
         L.tileLayer(`https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=${encodeURIComponent(maptilerKey)}`, {
             attribution: '© <a href="https://www.maptiler.com/copyright/" target="_blank">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>',
             maxZoom: 19
         }).addTo(donorMap);
-        if (badge) {
-            badge.textContent = "🗺️ MapTiler Active";
-            badge.classList.remove("hidden");
-        }
     } else {
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
             attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors',
             maxZoom: 19
         }).addTo(donorMap);
-        if (badge) {
-            badge.textContent = "🗺️ Interactive Map Active";
-            badge.classList.remove("hidden");
-        }
     }
 
     donorMarker = L.marker(initialCenter, { draggable: true }).addTo(donorMap);
@@ -2003,9 +2336,38 @@ function renderNgoFoodMap() {
 
 let activeWebcamStream = null;
 
+function updateImageActionButtons() {
+    const retakeBtn = document.getElementById("retakePhotoBtn");
+    const chooseAnotherBtn = document.getElementById("chooseAnotherBtn");
+    const removeBtn = document.getElementById("removePhotoBtn");
+
+    if (imageSource === "camera") {
+        if (retakeBtn) retakeBtn.style.display = "";
+        if (chooseAnotherBtn) chooseAnotherBtn.style.display = "none";
+        if (removeBtn) removeBtn.style.display = "";
+    } else if (imageSource === "gallery") {
+        if (retakeBtn) retakeBtn.style.display = "none";
+        if (chooseAnotherBtn) chooseAnotherBtn.style.display = "";
+        if (removeBtn) removeBtn.style.display = "";
+    } else {
+        if (retakeBtn) retakeBtn.style.display = "none";
+        if (chooseAnotherBtn) chooseAnotherBtn.style.display = "none";
+        if (removeBtn) removeBtn.style.display = "none";
+    }
+}
+
+function triggerGallerySelection() {
+    const galInput = document.getElementById("foodGalleryInput");
+    if (galInput) {
+        galInput.value = "";
+        galInput.click();
+    }
+}
+
 async function triggerCameraCapture() {
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     const cameraInput = document.getElementById("foodCameraInput");
+    if (cameraInput) cameraInput.value = "";
 
     // If mobile or if getUserMedia is not supported, trigger rear camera input
     if (isMobile || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -2056,6 +2418,7 @@ function captureWebcamSnapshot() {
 
     const base64Data = canvas.toDataURL("image/jpeg", 0.85);
     uploadedImageBase64 = base64Data;
+    imageSource = "camera";
 
     const previewImg = document.getElementById("imagePreview");
     const container = document.getElementById("imagePreviewContainer");
@@ -2070,6 +2433,7 @@ function captureWebcamSnapshot() {
         reqBadge.textContent = "Photo Attached ✅";
     }
 
+    updateImageActionButtons();
     closeWebcamModal();
     showToast("📸 Food photo captured successfully!");
 }
@@ -2105,6 +2469,7 @@ async function handleImageFileSelected(input) {
     try {
         const compressed = await compressImageFile(file);
         uploadedImageBase64 = compressed;
+        imageSource = (input.id === "foodCameraInput") ? "camera" : "gallery";
 
         const previewImg = document.getElementById("imagePreview");
         const container = document.getElementById("imagePreviewContainer");
@@ -2117,6 +2482,7 @@ async function handleImageFileSelected(input) {
             reqBadge.textContent = "Photo Attached ✅";
         }
 
+        updateImageActionButtons();
         showToast("📸 Food photo attached! Ready for submission.");
     } catch (err) {
         console.error("Image processing error:", err);
@@ -2126,6 +2492,7 @@ async function handleImageFileSelected(input) {
 
 function removeImage() {
     uploadedImageBase64 = null;
+    imageSource = null;
 
     const camInput = document.getElementById("foodCameraInput");
     const galInput = document.getElementById("foodGalleryInput");
@@ -2143,6 +2510,8 @@ function removeImage() {
         reqBadge.className = "status pending";
         reqBadge.textContent = "Photo Required";
     }
+
+    updateImageActionButtons();
 }
 
 
@@ -2541,10 +2910,13 @@ function renderNGOAvailable() {
     }
 
     if (available.length === 0) {
+        const isFiltered = Boolean(search || filter);
         container.innerHTML = emptyMessage(
             "🥗",
-            "No available donations match",
-            "Try clearing your search or category filter to discover more surplus food."
+            isFiltered ? "No available donations match" : "No food donations available right now.",
+            isFiltered
+                ? "Try clearing your search or category filter to discover more surplus food."
+                : "Surplus food shared by registered donors will appear here as soon as it is posted."
         );
         return;
     }
@@ -2563,7 +2935,7 @@ function renderNGORecentFood() {
         .slice(0, 3);
 
     if (available.length === 0) {
-        container.innerHTML = emptyMessage("🍃", "No food donations waiting", "Surplus food posted by local donors will appear here.");
+        container.innerHTML = emptyMessage("🍃", "No food donations available right now.", "Surplus food shared by registered donors will appear here as soon as it is posted.");
         return;
     }
 
@@ -2938,10 +3310,15 @@ function openFoodDetail(id) {
                 <span class="detail-label">Donor</span>
                 <strong class="detail-val">👤 ${escapeHTML(donation.donorName || 'Community Member')}</strong>
             </div>
+            ${currentUser ? `
             <div class="detail-cell">
                 <span class="detail-label">Donor Contact</span>
                 <strong class="detail-val">✉️ ${escapeHTML(donation.donorEmail || '-')}</strong>
-            </div>
+            </div>` : `
+            <div class="detail-cell">
+                <span class="detail-label">Donor Status</span>
+                <strong class="detail-val text-green">✅ Verified Registered Donor</strong>
+            </div>`}
             ${donation.acceptedByName ? `
             <div class="detail-cell full">
                 <span class="detail-label">Accepted By NGO</span>

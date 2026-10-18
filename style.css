@@ -3445,5 +3445,110 @@ body.dark .priority-badge.needs-review {
     cursor: pointer;
 }
 
+/* ================= DATE INPUTS WITH CALENDAR ICON ================= */
+.date-input-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+}
+
+.date-input-wrapper input[type="text"] {
+    width: 100%;
+    padding-right: 42px;
+    cursor: pointer;
+}
+
+.date-input-wrapper .calendar-icon-btn {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: transparent;
+    border: none;
+    padding: 5px;
+    margin: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--green, #2d6a4f);
+    border-radius: 6px;
+    transition: all 0.2s ease;
+    z-index: 2;
+}
+
+.date-input-wrapper .calendar-icon-btn:hover:not(:disabled) {
+    background: rgba(45, 106, 79, 0.12);
+    transform: translateY(-50%) scale(1.08);
+}
+
+.date-input-wrapper .calendar-icon-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.4;
+    color: var(--muted, #64748b);
+}
+
+.date-input-wrapper input:read-only,
+.date-input-wrapper input.date-readonly {
+    background: #f1f5f9 !important;
+    border-color: #cbd5e1 !important;
+    color: #334155 !important;
+    cursor: not-allowed !important;
+    box-shadow: none !important;
+}
+
+body.dark .date-input-wrapper input:read-only,
+body.dark .date-input-wrapper input.date-readonly {
+    background: #1e293b !important;
+    border-color: #334155 !important;
+    color: #94a3b8 !important;
+}
+
+.native-date-hidden {
+    position: absolute;
+    right: 14px;
+    bottom: 10px;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+
+/* Shimmer Skeleton & Landing Food Styles */
+@keyframes shimmerAnim {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+
+.food-skeleton-card {
+    background: var(--white);
+    border: 1px solid var(--line);
+    border-radius: 13px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+}
+
+.skeleton-shimmer {
+    background: linear-gradient(90deg, #f1f5f3 25%, #e2e8e5 50%, #f1f5f3 75%);
+    background-size: 200% 100%;
+    animation: shimmerAnim 1.6s infinite ease-in-out;
+}
+
+body.dark .skeleton-shimmer {
+    background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%);
+    background-size: 200% 100%;
+}
+
+.status-available {
+    background: #dcfce7 !important;
+    color: #166534 !important;
+    border: 1px solid #bbf7d0;
+}
+
+
 
 

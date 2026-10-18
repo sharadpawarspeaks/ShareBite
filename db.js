@@ -241,7 +241,7 @@ function seedInitialData() {
         VALUES (?, ?, ?, ?);
     `);
 
-    const donorInfo = insertUser.run('Sarah Jenkins', 'donor@foodshare.org', donorHash, 'donor');
+    const donorInfo = insertUser.run('Community Donor', 'donor@foodshare.org', donorHash, 'donor');
     const donorId = donorInfo.lastInsertRowid;
 
     const ngoInfo = insertUser.run('Hope Community Shelter', 'ngo@foodshare.org', ngoHash, 'ngo');
@@ -514,40 +514,45 @@ function getDonations(filters = {}) {
     // Automatically purge expired food from database
     purgeExpiredDonations();
 
-    let sql = 'SELECT * FROM donations WHERE 1=1';
+    let sql = `
+        SELECT d.*, COALESCE(u.name, d.donor_name) AS donor_name
+        FROM donations d
+        LEFT JOIN users u ON d.donor_id = u.id
+        WHERE 1=1
+    `;
     const params = [];
 
     // Filter by specific status in DB if not 'Available' (available status is filtered in memory to exclude expired)
     if (filters.status && filters.status !== 'Available') {
-        sql += ' AND status = ?';
+        sql += ' AND d.status = ?';
         params.push(filters.status);
     }
 
     if (filters.donorEmail) {
-        sql += ' AND LOWER(donor_email) = LOWER(?)';
+        sql += ' AND LOWER(d.donor_email) = LOWER(?)';
         params.push(filters.donorEmail);
     }
 
     if (filters.acceptedBy) {
-        sql += ' AND LOWER(accepted_by_email) = LOWER(?)';
+        sql += ' AND LOWER(d.accepted_by_email) = LOWER(?)';
         params.push(filters.acceptedBy);
     }
 
     if (filters.foodType) {
-        sql += ' AND food_type = ?';
+        sql += ' AND d.food_type = ?';
         params.push(filters.foodType);
     }
 
     if (filters.search) {
         const query = `%${filters.search.toLowerCase()}%`;
-        sql += ' AND (LOWER(food_name) LIKE ? OR LOWER(pickup_location) LIKE ? OR LOWER(description) LIKE ? OR LOWER(food_type) LIKE ?)';
+        sql += ' AND (LOWER(d.food_name) LIKE ? OR LOWER(d.pickup_location) LIKE ? OR LOWER(d.description) LIKE ? OR LOWER(d.food_type) LIKE ?)';
         params.push(query, query, query, query);
     }
 
     if (filters.sort === 'quantity') {
-        sql += ' ORDER BY quantity DESC';
+        sql += ' ORDER BY d.quantity DESC';
     } else {
-        sql += ' ORDER BY created_at DESC';
+        sql += ' ORDER BY d.created_at DESC';
     }
 
     const rows = db.prepare(sql).all(...params);
@@ -569,7 +574,12 @@ function getDonations(filters = {}) {
 }
 
 function getDonationById(id) {
-    const row = db.prepare('SELECT * FROM donations WHERE id = ?;').get(id);
+    const row = db.prepare(`
+        SELECT d.*, COALESCE(u.name, d.donor_name) AS donor_name
+        FROM donations d
+        LEFT JOIN users u ON d.donor_id = u.id
+        WHERE d.id = ?;
+    `).get(id);
     return mapDonation(row);
 }
 

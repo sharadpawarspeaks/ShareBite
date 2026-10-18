@@ -140,7 +140,7 @@
                     <div class="hero-stats">
 
                         <div>
-                            <strong id="heroFood">0 kg</strong>
+                            <strong id="heroFood">0.0 kg</strong>
                             <span>Food Shared</span>
                         </div>
 
@@ -161,6 +161,37 @@
             </section>
 
         </div>
+
+
+        <!-- RECENTLY DONATED FOOD -->
+
+        <section id="recentFoodSection" class="section">
+
+            <div class="section-title center">
+
+                <span class="eyebrow">COMMUNITY FOOD RESCUE</span>
+
+                <h2>Recently Donated Food</h2>
+
+                <p>
+                    Real-time surplus meals and groceries shared by registered donors in your area.
+                </p>
+
+            </div>
+
+            <div id="recentFoodContainer" class="donation-grid">
+                <!-- Dynamically populated from database records or empty state -->
+            </div>
+
+            <div id="recentFoodFooter" class="section-action" style="margin-top: 32px; display: flex; justify-content: center;">
+
+                <button id="btnViewAllFood" class="btn btn-primary" onclick="navigateToAvailableFood()">
+                    🍱 View All Food →
+                </button>
+
+            </div>
+
+        </section>
 
 
         <!-- ABOUT -->
@@ -512,7 +543,7 @@
 
                 <div class="form-card">
 
-                    <form id="donationForm">
+                    <form id="donationForm" onsubmit="event.preventDefault(); return false;">
 
                         <div class="form-grid">
 
@@ -559,7 +590,18 @@
 
                                 <label for="preparedDate">Prepared Date <span style="color:var(--danger, #dc2626); font-weight:bold;">*</span></label>
 
-                                <input type="text" id="preparedDate" placeholder="DD/MM/YYYY" maxlength="10" autocomplete="off" required>
+                                <div class="date-input-wrapper">
+                                    <input type="text" id="preparedDate" placeholder="DD/MM/YYYY" maxlength="10" autocomplete="off" required onclick="handleDateInputClick(this)">
+                                    <input type="date" id="preparedDateNative" tabindex="-1" aria-hidden="true" class="native-date-hidden" onchange="syncNativeDateToField('preparedDate', this.value)">
+                                    <button type="button" id="preparedDateCalBtn" class="calendar-icon-btn" onclick="openDatePicker('preparedDate')" title="Choose prepared date" aria-label="Open calendar for prepared date">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                                            <line x1="16" y1="2" x2="16" y2="6"></line>
+                                            <line x1="8" y1="2" x2="8" y2="6"></line>
+                                            <line x1="3" y1="10" x2="21" y2="10"></line>
+                                        </svg>
+                                    </button>
+                                </div>
                                 <small id="preparedDateHelp" style="display:block;margin-top:4px;font-size:11px;color:var(--muted);">Format: DD/MM/YYYY (e.g. 16/10/2026)</small>
 
                             </div>
@@ -569,7 +611,18 @@
 
                                 <label for="expiryDate">Best Before / Expiry <span style="color:var(--danger, #dc2626); font-weight:bold;">*</span></label>
 
-                                <input type="text" id="expiryDate" placeholder="DD/MM/YYYY" maxlength="10" autocomplete="off" required>
+                                <div class="date-input-wrapper">
+                                    <input type="text" id="expiryDate" placeholder="DD/MM/YYYY" maxlength="10" autocomplete="off" required onclick="handleDateInputClick(this)">
+                                    <input type="date" id="expiryDateNative" tabindex="-1" aria-hidden="true" class="native-date-hidden" onchange="syncNativeDateToField('expiryDate', this.value)">
+                                    <button type="button" id="expiryDateCalBtn" class="calendar-icon-btn" onclick="openDatePicker('expiryDate')" title="Choose expiry date" aria-label="Open calendar for expiry date">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                                            <line x1="16" y1="2" x2="16" y2="6"></line>
+                                            <line x1="8" y1="2" x2="8" y2="6"></line>
+                                            <line x1="3" y1="10" x2="21" y2="10"></line>
+                                        </svg>
+                                    </button>
+                                </div>
                                 <small id="expiryDateHelp" style="display:block;margin-top:4px;font-size:11px;color:var(--muted);">Format: DD/MM/YYYY (e.g. 16/10/2026)</small>
 
                             </div>
@@ -580,7 +633,6 @@
                                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:6px;">
                                     <label for="pickupLocation" style="margin:0;display:flex;align-items:center;gap:6px;">
                                         <span>Pickup Location <span style="color:var(--danger, #dc2626); font-weight:bold;">*</span></span>
-                                        <span id="mapLoadedBadge" class="status accepted" style="font-size:10px;padding:2px 7px;">🗺️ Interactive Map Active</span>
                                     </label>
                                     <button type="button" id="btnDetectLocation" class="small-btn small-btn-secondary" onclick="detectUserLocation()" style="font-size:11px;padding:4px 10px;">
                                         📍 Use Current Location
@@ -635,7 +687,7 @@
                                         <small style="font-size:11px;color:var(--muted);">Capture with device camera</small>
                                     </button>
 
-                                    <button type="button" class="upload-option-card" onclick="document.getElementById('foodGalleryInput').click()" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:18px 14px;border:2px dashed var(--border);border-radius:12px;background:var(--card-bg, #ffffff);cursor:pointer;text-align:center;">
+                                    <button type="button" class="upload-option-card" onclick="triggerGallerySelection()" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:18px 14px;border:2px dashed var(--border);border-radius:12px;background:var(--card-bg, #ffffff);cursor:pointer;text-align:center;">
                                         <span style="font-size:30px;margin-bottom:6px;">🖼️</span>
                                         <strong style="font-size:14px;color:var(--ink);margin-bottom:3px;">Choose from Gallery</strong>
                                         <small style="font-size:11px;color:var(--muted);">JPG, JPEG, PNG, WEBP (max 5MB)</small>
@@ -651,13 +703,13 @@
                                         </div>
                                     </div>
                                     <div style="margin-top:10px;display:flex;justify-content:center;gap:10px;flex-wrap:wrap;">
-                                        <button type="button" class="btn btn-secondary" onclick="triggerCameraCapture()" style="font-size:12px;padding:6px 14px;">
+                                        <button type="button" id="retakePhotoBtn" class="btn btn-secondary" onclick="triggerCameraCapture()" style="font-size:12px;padding:6px 14px;">
                                             📷 Retake Photo
                                         </button>
-                                        <button type="button" class="btn btn-secondary" onclick="document.getElementById('foodGalleryInput').click()" style="font-size:12px;padding:6px 14px;">
+                                        <button type="button" id="chooseAnotherBtn" class="btn btn-secondary" onclick="triggerGallerySelection()" style="font-size:12px;padding:6px 14px;">
                                             🖼️ Choose Another
                                         </button>
-                                        <button type="button" class="remove-image" onclick="removeImage()" style="font-size:12px;padding:6px 14px;background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;border-radius:6px;cursor:pointer;">
+                                        <button type="button" id="removePhotoBtn" class="remove-image" onclick="removeImage()" style="font-size:12px;padding:6px 14px;background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;border-radius:6px;cursor:pointer;">
                                             🗑️ Remove Photo
                                         </button>
                                     </div>
@@ -686,39 +738,13 @@
                         </div>
 
 
-                        <div class="ai-box">
-
-                            <div class="ai-title">
-                                🤖 AI FOOD PRIORITY
-                            </div>
-
-                            <p id="aiPriorityDescription">
-                                Food priority is calculated based on expiry urgency. Donations nearing
-                                expiry are prioritized to ensure rapid redistribution and prevent food waste.
-                            </p>
-
-                            <div class="priority-result">
-
-                                <span id="priorityBadge" class="priority-badge">
-                                    Not analyzed
-                                </span>
-
-                                <span id="priorityText">
-                                    Enter expiry date (DD/MM/YYYY) to calculate priority.
-                                </span>
-
-                            </div>
-
-                        </div>
-
-
                         <div class="form-actions">
 
                             <button type="button" class="btn btn-secondary" onclick="resetDonationForm()">
                                 Clear
                             </button>
 
-                            <button type="submit" class="btn btn-primary">
+                            <button type="submit" id="submitDonationBtn" class="btn btn-primary">
                                 Submit Donation →
                             </button>
 

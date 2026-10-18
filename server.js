@@ -130,6 +130,12 @@ function reloadEnvConfig() {
     }
 }
 
+function getGeminiApiKey() {
+    reloadEnvConfig();
+    const key = process.env.GEMINI_API_KEY || db.getSetting('gemini_api_key');
+    return (key && key.trim()) ? key.trim() : null;
+}
+
 function getGroqApiKey() {
     reloadEnvConfig();
     const key = process.env.GROQ_API_KEY || db.getSetting('groq_api_key');
@@ -151,7 +157,82 @@ function getMapTilerApiKey() {
 // -------------------------------------------------------------
 // AI-Assisted Food Prioritisation (TEXT ONLY - NO IMAGES)
 // -------------------------------------------------------------
-async function generateAIPriorityExplanation({ foodName, foodType, quantity, expiryDate, preparedDate }, apiKey) {
+async function callGeminiApi(promptText, geminiKey) {
+    const models = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-2.5-flash'];
+    for (const model of models) {
+        try {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(geminiKey)}`;
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    systemInstruction: {
+                        parts: [{
+                            text: "You are ShareBite's AI Food Redistribution Assistant. Your role is solely to provide a concise 1-sentence priority explanation and food-safety handling recommendation for NGOs based ONLY on stated text details. The backend priority is fixed and authoritative. Never contradict the priority. Never invent dates. Never ask for images."
+                        }]
+                    },
+                    contents: [{
+                        parts: [{
+                            text: promptText
+                        }]
+                    }],
+                    generationConfig: {
+                        temperature: 0.2,
+                        maxOutputTokens: 100
+                    }
+                })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+                if (aiText) {
+                    return { text: aiText, model };
+                }
+            }
+        } catch {
+            // Try next model if any network or model availability issue
+        }
+    }
+    return null;
+}
+
+async function callGroqApi(promptText, groqKey) {
+    try {
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${groqKey}`
+            },
+            body: JSON.stringify({
+                model: 'llama-3.3-70b-versatile',
+                messages: [
+                    {
+                        role: 'system',
+                        content: 'You are ShareBite\'s AI Food Redistribution Assistant. Your role is solely to provide a concise 1-sentence priority explanation and food-safety handling recommendation for NGOs based ONLY on stated text details. The backend priority is fixed and authoritative. Never contradict the priority. Never invent dates. Never ask for images.'
+                    },
+                    {
+                        role: 'user',
+                        content: promptText
+                    }
+                ],
+                temperature: 0.2,
+                max_tokens: 100
+            })
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            return data.choices?.[0]?.message?.content?.trim() || null;
+        }
+    } catch {
+        return null;
+    }
+    return null;
+}
+
+async function generateAIPriorityExplanation({ foodName, foodType, quantity, expiryDate, preparedDate }) {
     // 1. Backend deterministic calculation is the single authoritative source of truth
     const priorityCalc = dateUtils.calculateFoodPriority(expiryDate);
     const priority = priorityCalc.priority;
@@ -174,48 +255,13 @@ async function generateAIPriorityExplanation({ foodName, foodType, quantity, exp
         defaultReason = `Verification needed: Missing or invalid expiry information. Please confirm with donor before collection.`;
     }
 
-    // 3. If Groq API key is not configured, return authoritative deterministic explanation
-    const trimmedKey = apiKey ? apiKey.trim() : null;
-    if (!trimmedKey) {
-        return {
-            priority,
-            priorityLevel,
-            daysRemaining,
-            badgeLabel: priorityCalc.badgeLabel,
-            badgeClass: priorityCalc.badgeClass,
-            isExpired: priorityCalc.isExpired,
-            expiresToday: priorityCalc.expiresToday,
-            explanation: defaultReason,
-            provider: 'Deterministic Food Safety Rule Engine'
-        };
-    }
+    const promptText = `Food: "${foodName || 'Donation'}", Category: "${foodType || 'General'}", Quantity: ${quantity || 1} kg, Expiry Date: "${expiryDate}", Calculated Priority: "${priorityLevel}" (${daysRemaining !== null ? daysRemaining + ' days remaining' : 'unspecified'}). Provide a 1-sentence explanation for NGOs.`;
 
-    // 4. If Groq API key is present, generate a helpful 1-sentence explanation using text model (NEVER images)
-    try {
-        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${trimmedKey}`
-            },
-            body: JSON.stringify({
-                model: 'llama-3.3-70b-versatile',
-                messages: [
-                    {
-                        role: 'system',
-                        content: 'You are ShareBite\'s AI Food Redistribution Assistant. Your role is solely to provide a concise 1-sentence priority explanation and food-safety handling recommendation for NGOs based ONLY on stated text details. The backend priority is fixed and authoritative. Never contradict the priority. Never invent dates. Never ask for images.'
-                    },
-                    {
-                        role: 'user',
-                        content: `Food: "${foodName || 'Donation'}", Category: "${foodType || 'General'}", Quantity: ${quantity || 1} kg, Expiry Date: "${expiryDate}", Calculated Priority: "${priorityLevel}" (${daysRemaining !== null ? daysRemaining + ' days remaining' : 'unspecified'}). Provide a 1-sentence explanation for NGOs.`
-                    }
-                ],
-                temperature: 0.2,
-                max_tokens: 100
-            })
-        });
-
-        if (!response.ok) {
+    // 3. Try Google Gemini AI first (preferred)
+    const geminiKey = getGeminiApiKey();
+    if (geminiKey) {
+        const geminiRes = await callGeminiApi(promptText, geminiKey);
+        if (geminiRes && geminiRes.text) {
             return {
                 priority,
                 priorityLevel,
@@ -224,38 +270,43 @@ async function generateAIPriorityExplanation({ foodName, foodType, quantity, exp
                 badgeClass: priorityCalc.badgeClass,
                 isExpired: priorityCalc.isExpired,
                 expiresToday: priorityCalc.expiresToday,
-                explanation: defaultReason,
-                provider: 'Deterministic Food Safety Rule Engine (Groq fallback)'
+                explanation: geminiRes.text,
+                provider: `Google Gemini AI (${geminiRes.model} Text Prioritisation)`
             };
         }
-
-        const data = await response.json();
-        const aiText = data.choices?.[0]?.message?.content?.trim();
-
-        return {
-            priority,
-            priorityLevel,
-            daysRemaining,
-            badgeLabel: priorityCalc.badgeLabel,
-            badgeClass: priorityCalc.badgeClass,
-            isExpired: priorityCalc.isExpired,
-            expiresToday: priorityCalc.expiresToday,
-            explanation: aiText || defaultReason,
-            provider: 'Groq Llama 3 AI (Text Prioritisation)'
-        };
-    } catch (err) {
-        return {
-            priority,
-            priorityLevel,
-            daysRemaining,
-            badgeLabel: priorityCalc.badgeLabel,
-            badgeClass: priorityCalc.badgeClass,
-            isExpired: priorityCalc.isExpired,
-            expiresToday: priorityCalc.expiresToday,
-            explanation: defaultReason,
-            provider: 'Deterministic Food Safety Rule Engine (Offline)'
-        };
     }
+
+    // 4. Fallback to Groq AI if configured
+    const groqKey = getGroqApiKey();
+    if (groqKey) {
+        const groqText = await callGroqApi(promptText, groqKey);
+        if (groqText) {
+            return {
+                priority,
+                priorityLevel,
+                daysRemaining,
+                badgeLabel: priorityCalc.badgeLabel,
+                badgeClass: priorityCalc.badgeClass,
+                isExpired: priorityCalc.isExpired,
+                expiresToday: priorityCalc.expiresToday,
+                explanation: groqText,
+                provider: 'Groq Llama 3 AI (Text Prioritisation)'
+            };
+        }
+    }
+
+    // 5. Deterministic rule engine fallback
+    return {
+        priority,
+        priorityLevel,
+        daysRemaining,
+        badgeLabel: priorityCalc.badgeLabel,
+        badgeClass: priorityCalc.badgeClass,
+        isExpired: priorityCalc.isExpired,
+        expiresToday: priorityCalc.expiresToday,
+        explanation: defaultReason,
+        provider: 'Deterministic Food Safety Rule Engine'
+    };
 }
 
 // -------------------------------------------------------------
@@ -645,14 +696,27 @@ async function requestHandler(req, res) {
                     return sendError(res, 400, 'Expiry date cannot be before prepared date.');
                 }
 
+                // Backend independent validation & enforcement for Cooked Food
+                let finalPreparedISO = parsedPrepared.iso;
+                let finalExpiryISO = parsedExpiry.iso;
+
+                if (foodType === 'Cooked Food') {
+                    const expectedCooked = dateUtils.getCookedFoodDates();
+                    if (parsedPrepared.iso !== expectedCooked.preparedDateISO || parsedExpiry.iso !== expectedCooked.expiryDateISO) {
+                        return sendError(res, 400, `Cooked Food must be prepared today (${expectedCooked.preparedDateDisplay}) and expire tomorrow (${expectedCooked.expiryDateDisplay}).`);
+                    }
+                    finalPreparedISO = expectedCooked.preparedDateISO;
+                    finalExpiryISO = expectedCooked.expiryDateISO;
+                }
+
                 try {
                     // Backend calculates priority exclusively from expiry date
                     const donation = db.createDonation({
                         foodName: foodName.trim(),
                         foodType,
                         quantity: numQuantity,
-                        preparedDate: parsedPrepared.iso,
-                        expiryDate: parsedExpiry.iso,
+                        preparedDate: finalPreparedISO,
+                        expiryDate: finalExpiryISO,
                         pickupLocation: pickupLocation.trim(),
                         latitude: latitude !== undefined && latitude !== null && !isNaN(Number(latitude)) ? Number(latitude) : null,
                         longitude: longitude !== undefined && longitude !== null && !isNaN(Number(longitude)) ? Number(longitude) : null,
@@ -754,6 +818,17 @@ async function requestHandler(req, res) {
             // GET /api/ai/status
             // GET /api/ai/status (Fetch status of AI prioritisation assistant)
             if (pathname === '/api/ai/status' && method === 'GET') {
+                const geminiKey = getGeminiApiKey();
+                if (geminiKey) {
+                    return sendJson(res, 200, {
+                        hasKey: true,
+                        type: 'gemini',
+                        model: 'gemini-1.5-flash',
+                        provider: 'Google Gemini Flash AI (Text Prioritisation Active 🟢)',
+                        keyPreview: `${geminiKey.slice(0, 6)}...${geminiKey.slice(-4)}`
+                    });
+                }
+
                 const groqKey = getGroqApiKey();
                 if (groqKey) {
                     return sendJson(res, 200, {
@@ -769,31 +844,44 @@ async function requestHandler(req, res) {
                     hasKey: false,
                     type: 'none',
                     model: 'Deterministic Rule Engine',
-                    provider: 'Deterministic Rule Engine (Groq Key Optional)',
+                    provider: 'Deterministic Rule Engine (AI Key Optional)',
                     keyPreview: null
                 });
             }
 
-            // POST /api/ai/config (Save or update Groq API key)
+            // POST /api/ai/config (Save or update Gemini or Groq API key)
             if (pathname === '/api/ai/config' && method === 'POST') {
                 const body = await readJsonBody(req);
-                const { apiKey } = body;
+                const { apiKey, type } = body;
                 if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length < 8) {
-                    return sendError(res, 400, 'Please provide a valid Groq API key (starts with gsk_...).');
+                    return sendError(res, 400, 'Please provide a valid AI API key.');
                 }
                 const cleanedKey = apiKey.trim();
-                db.setSetting('groq_api_key', cleanedKey);
-                return sendJson(res, 200, {
-                    success: true,
-                    message: 'Groq AI key saved for text prioritisation! 🚀',
-                    keyPreview: `${cleanedKey.slice(0, 7)}...${cleanedKey.slice(-4)}`
-                });
+                const isGroq = type === 'groq' || cleanedKey.startsWith('gsk_');
+                if (isGroq) {
+                    db.setSetting('groq_api_key', cleanedKey);
+                    return sendJson(res, 200, {
+                        success: true,
+                        provider: 'groq',
+                        message: 'Groq AI key saved for text prioritisation! 🚀',
+                        keyPreview: `${cleanedKey.slice(0, 7)}...${cleanedKey.slice(-4)}`
+                    });
+                } else {
+                    db.setSetting('gemini_api_key', cleanedKey);
+                    return sendJson(res, 200, {
+                        success: true,
+                        provider: 'gemini',
+                        message: 'Google Gemini AI key saved for text prioritisation! 🚀',
+                        keyPreview: `${cleanedKey.slice(0, 6)}...${cleanedKey.slice(-4)}`
+                    });
+                }
             }
 
             // DELETE /api/ai/config (Remove saved API key)
             if (pathname === '/api/ai/config' && method === 'DELETE') {
+                db.setSetting('gemini_api_key', '');
                 db.setSetting('groq_api_key', '');
-                return sendJson(res, 200, { success: true, message: 'Groq API key cleared.' });
+                return sendJson(res, 200, { success: true, message: 'AI API keys cleared.' });
             }
 
             // GET /api/map-config (Fetch configured map service: MapTiler primary, Google Maps fallback)
@@ -865,14 +953,13 @@ async function requestHandler(req, res) {
                     return sendError(res, 400, 'Food images must never be sent to the AI service. AI is strictly reserved for text prioritisation.');
                 }
 
-                const apiKey = getGroqApiKey();
                 const result = await generateAIPriorityExplanation({
                     foodName: foodName ? String(foodName).trim() : 'Food Listing',
                     foodType: foodType || 'General',
                     quantity: Number(quantity) || 1,
                     expiryDate,
                     preparedDate
-                }, apiKey);
+                });
 
                 return sendJson(res, 200, result);
             }

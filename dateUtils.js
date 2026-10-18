@@ -284,6 +284,38 @@ function compareDonationsByUrgency(a, b, referenceDate = new Date()) {
     return Number(a.id || 0) - Number(b.id || 0);
 }
 
+/**
+ * Calculates dynamic cooked food dates based on current or specified local calendar date.
+ * - Prepared Date = current local calendar date (Today)
+ * - Expiry Date = current local calendar date + 1 day (Tomorrow)
+ * Handles month roll-overs, year roll-overs, and leap years correctly.
+ */
+function getCookedFoodDates(refDate = new Date()) {
+    const ref = refDate instanceof Date ? refDate : new Date(refDate);
+    const y = ref.getFullYear();
+    const m = ref.getMonth();
+    const d = ref.getDate();
+
+    // Today (local midnight)
+    const today = new Date(y, m, d);
+    const todayDD = String(today.getDate()).padStart(2, '0');
+    const todayMM = String(today.getMonth() + 1).padStart(2, '0');
+    const todayYYYY = String(today.getFullYear());
+
+    // Tomorrow (today + 1 calendar day)
+    const tomorrow = new Date(y, m, d + 1);
+    const tomDD = String(tomorrow.getDate()).padStart(2, '0');
+    const tomMM = String(tomorrow.getMonth() + 1).padStart(2, '0');
+    const tomYYYY = String(tomorrow.getFullYear());
+
+    return {
+        preparedDateDisplay: `${todayDD}/${todayMM}/${todayYYYY}`,
+        preparedDateISO: `${todayYYYY}-${todayMM}-${todayDD}`,
+        expiryDateDisplay: `${tomDD}/${tomMM}/${todayYYYY ? tomYYYY : todayYYYY}`,
+        expiryDateISO: `${tomYYYY}-${tomMM}-${tomDD}`
+    };
+}
+
 // Universal module export (Node.js CommonJS + browser window)
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
@@ -293,7 +325,8 @@ if (typeof module !== 'undefined' && module.exports) {
         formatDateToISO,
         getDaysRemaining,
         calculateFoodPriority,
-        compareDonationsByUrgency
+        compareDonationsByUrgency,
+        getCookedFoodDates
     };
 }
 
@@ -305,6 +338,7 @@ if (typeof window !== 'undefined') {
         formatDateToISO,
         getDaysRemaining,
         calculateFoodPriority,
-        compareDonationsByUrgency
+        compareDonationsByUrgency,
+        getCookedFoodDates
     };
 }
