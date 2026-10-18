@@ -105,24 +105,21 @@ async function runTests() {
         console.log('✅ TEST 3 PASSED: Landing page feed includes genuine donation with real donor name and attributes.');
 
         // ----------------------------------------------------
-        // TEST 4: Empty state validation when no eligible donations exist
+        // TEST 4: Food donations are kept private for post-login dashboards
         // ----------------------------------------------------
-        console.log('--- TEST 4: Empty State Validation ---');
+        console.log('--- TEST 4: Privacy & Post-Login Dashboard Verification ---');
         const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-        const js = fs.readFileSync(path.join(__dirname, '..', 'script.js'), 'utf8');
-        assert(html.includes('id="recentFoodSection"'), 'Landing page must contain recentFoodSection');
-        assert(html.includes('id="recentFoodContainer"'), 'Must contain recentFoodContainer');
-        assert(html.includes('id="recentFoodFooter"'), 'Must contain recentFoodFooter');
-        assert(html.includes('id="btnViewAllFood"'), 'Must contain View All Food button');
-        assert(js.includes('No food donations available right now.'), 'script.js must contain required empty-state title');
-        assert(js.includes('Be the first to share food with your community.'), 'script.js must contain required empty-state subtitle');
-        assert(js.includes('openRoleModal(\'donor\')'), 'Empty state must include Donate Food button');
-        console.log('✅ TEST 4 PASSED: Empty state strings and actions verified in code.');
+        assert(!html.includes('id="recentFoodSection"'), 'Landing page must NOT contain recentFoodSection before login');
+        assert(!html.includes('id="recentFoodContainer"'), 'Landing page must NOT contain recentFoodContainer before login');
+        assert(html.includes('id="ngoAvailableContainer"'), 'Available donations list must be inside NGO dashboard');
+        assert(html.includes('id="historyContainer"'), 'Donations history must be inside Donor dashboard');
+        console.log('✅ TEST 4 PASSED: Food donations are strictly reserved for post-login dashboards.');
 
         // ----------------------------------------------------
         // TEST 5: Backend / Network Error Handling
         // ----------------------------------------------------
         console.log('--- TEST 5: Error Handling Without Fake Fallback ---');
+        const js = fs.readFileSync(path.join(__dirname, '..', 'script.js'), 'utf8');
         assert(js.includes('function renderLandingError()'), 'script.js must contain renderLandingError');
         assert(js.includes('Unable to connect to database'), 'Error state must display informative error message');
         assert(js.includes('Retry Connection'), 'Error state must allow user to retry');
