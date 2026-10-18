@@ -72,6 +72,11 @@ function initSchema() {
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS revoked_sessions (
+            token TEXT PRIMARY KEY,
+            revoked_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
         CREATE TABLE IF NOT EXISTS donations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             donor_id INTEGER NOT NULL,
@@ -483,28 +488,120 @@ function authenticateUser(email, password, role = null) {
 }
 
 // -------------------------------------------------------------
-// Session Operations
+// Session Operations (Persistent across refreshes & Vercel serverless lambdas)
 // -------------------------------------------------------------
+const SESSION_SECRET = process.env.SESSION_SECRET || 'sharebite-secure-hmac-session-token-key-2026';
+
+function signSessionToken(userId, rawToken, passwordHashSnippet = '') {
+    const payload = `${userId}:${Date.now()}:${rawToken}:${passwordHashSnippet}`;
+    const hmac = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('hex');
+    return `sb_${Buffer.from(payload).toString('base64url')}_${hmac}`;
+}
+
+function verifySessionToken(signedToken) {
+    if (!signedToken || typeof signedToken !== 'string') return null;
+    if (!signedToken.startsWith('sb_')) return null;
+    const parts = signedToken.split('_');
+    if (parts.length !== 3) return null;
+    const [, b64Payload, hmac] = parts;
+    let payload;
+    try {
+        payload = Buffer.from(b64Payload, 'base64url').toString('utf8');
+    } catch {
+        return null;
+    }
+    const expectedHmac = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('hex');
+    if (hmac.length !== expectedHmac.length || !crypto.timingSafeEqual(Buffer.from(hmac), Buffer.from(expectedHmac))) {
+        return null;
+    }
+    const [userIdStr, timestampStr, rawToken, hashSnippet] = payload.split(':');
+    const userId = Number(userIdStr);
+    const timestamp = Number(timestampStr);
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+    if (isNaN(userId) || isNaN(timestamp) || (Date.now() - timestamp > THIRTY_DAYS_MS)) {
+        return null;
+    }
+    return { userId, rawToken, hashSnippet: hashSnippet || '', timestamp };
+}
+
 function createSession(userId) {
-    const token = crypto.randomBytes(32).toString('hex');
-    db.prepare('INSERT INTO sessions (token, user_id) VALUES (?, ?);').run(token, userId);
+    const rawToken = crypto.randomBytes(24).toString('hex');
+    let hashSnippet = '';
+    try {
+        const userRow = db.prepare('SELECT password_hash FROM users WHERE id = ?;').get(userId);
+        if (userRow && userRow.password_hash) {
+            hashSnippet = userRow.password_hash.slice(-12);
+        }
+    } catch {}
+
+    const token = signSessionToken(userId, rawToken, hashSnippet);
+    try {
+        db.prepare('INSERT INTO sessions (token, user_id) VALUES (?, ?);').run(token, userId);
+    } catch (e) {
+        // Fallback for constraint
+    }
     return token;
 }
 
 function getUserByToken(token) {
     if (!token) return null;
-    const row = db.prepare(`
-        SELECT u.id, u.name, u.email, u.role, u.created_at
-        FROM sessions s
-        JOIN users u ON s.user_id = u.id
-        WHERE s.token = ?;
-    `).get(token);
-    return mapUser(row);
+
+    // Check if explicitly revoked
+    try {
+        const revoked = db.prepare('SELECT token FROM revoked_sessions WHERE token = ?;').get(token);
+        if (revoked) return null;
+    } catch {}
+
+    // 1. Direct query in sessions table (works locally and within warm containers)
+    try {
+        const row = db.prepare(`
+            SELECT u.id, u.name, u.email, u.role, u.password_hash, u.created_at
+            FROM sessions s
+            JOIN users u ON s.user_id = u.id
+            WHERE s.token = ?;
+        `).get(token);
+        if (row) return mapUser(row);
+    } catch {}
+
+    // 2. Cryptographic signature verification (persistent across serverless lambdas on Vercel)
+    const verified = verifySessionToken(token);
+    if (!verified) return null;
+
+    try {
+        const userRow = db.prepare(`
+            SELECT id, name, email, role, password_hash, created_at
+            FROM users
+            WHERE id = ?;
+        `).get(verified.userId);
+        if (!userRow) return null;
+
+        // If password was changed, hash snippet won't match; invalidate token
+        if (verified.hashSnippet && userRow.password_hash) {
+            const currentSnippet = userRow.password_hash.slice(-12);
+            if (currentSnippet !== verified.hashSnippet) {
+                return null;
+            }
+        }
+
+        // Cache session in this container instance
+        try {
+            db.prepare('INSERT OR IGNORE INTO sessions (token, user_id) VALUES (?, ?);').run(token, verified.userId);
+        } catch {}
+
+        return mapUser(userRow);
+    } catch {
+        return null;
+    }
 }
 
 function deleteSession(token) {
     if (!token) return;
-    db.prepare('DELETE FROM sessions WHERE token = ?;').run(token);
+    try {
+        db.prepare('DELETE FROM sessions WHERE token = ?;').run(token);
+    } catch {}
+    try {
+        db.prepare('INSERT OR IGNORE INTO revoked_sessions (token) VALUES (?);').run(token);
+    } catch {}
 }
 
 // -------------------------------------------------------------
@@ -802,11 +899,18 @@ function getStats() {
     // Automatically purge expired food before calculating statistics
     purgeExpiredDonations();
 
-    // Lifetime completed donations across all registered users
+    // 1. Food actually redistributed: completed donations across all registered users
     const completedRow = db.prepare(`
         SELECT COUNT(*) as completedCount, COALESCE(SUM(quantity), 0) as completedFood 
         FROM donations 
         WHERE status = 'Completed';
+    `).get();
+
+    // 2. Total genuine food donations submitted through ShareBite across all users (excluding cancelled)
+    const submittedRow = db.prepare(`
+        SELECT COUNT(*) as totalDonations, COALESCE(SUM(quantity), 0) as totalListedFood 
+        FROM donations 
+        WHERE status != 'Cancelled';
     `).get();
 
     const availableRow = db.prepare(`
@@ -818,15 +922,20 @@ function getStats() {
     const completedFood = Number(Number(completedRow ? (completedRow.completedFood || 0) : 0).toFixed(1));
     const completedMeals = Math.round(completedFood * 4);
     const completedCount = Number(completedRow ? (completedRow.completedCount || 0) : 0);
+    const totalDonations = Number(submittedRow ? (submittedRow.totalDonations || 0) : 0);
 
     return {
-        // Lifetime cumulative totals across all completed donations
+        // Food successfully redistributed metrics (Food Shared & Meals Supported)
         totalFood: completedFood,
         totalMeals: completedMeals,
-        totalDonations: completedCount,
         completedFood,
         completedCount,
+
+        // Total genuine food donations submitted across all users
+        totalDonations,
+        submittedCount: totalDonations,
         availableCount: availableRow ? Number(availableRow.availableCount || 0) : 0,
+
         conversionRate: '4 meals per kg of completed food',
         isLifetime: true
     };

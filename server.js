@@ -735,7 +735,7 @@ async function requestHandler(req, res) {
             if (acceptMatch && method === 'POST') {
                 const user = getAuthUser(req);
                 if (!user) {
-                    return sendError(res, 401, 'Please login as an NGO first.');
+                    return sendError(res, 401, 'Authentication required. Your session may have expired — please login as an NGO.');
                 }
                 if (user.role !== 'ngo') {
                     return sendError(res, 403, 'Only NGOs can accept food donations.');

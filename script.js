@@ -37,7 +37,18 @@ const API = {
 
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
-                throw new Error(data.error || `HTTP error ${res.status}`);
+                if (res.status === 401 && (token || currentUser)) {
+                    // Session is invalid or expired on backend
+                    currentUser = null;
+                    authToken = null;
+                    localStorage.removeItem("foodshareCurrentUser");
+                    localStorage.removeItem("foodshareToken");
+                    sessionStorage.removeItem("foodshareActivePage");
+                    renderNavAuth();
+                }
+                const err = new Error(data.error || `HTTP error ${res.status}`);
+                err.status = res.status;
+                throw err;
             }
             return data;
         } catch (err) {
@@ -69,7 +80,48 @@ function setupImageUpload() {
     updateImageActionButtons();
 }
 
+function initActivePageView() {
+    if (currentUser && authToken) {
+        const savedPage = sessionStorage.getItem("foodshareActivePage");
+        const homeEl = document.getElementById("homePage");
+        const donorEl = document.getElementById("donorPage");
+        const ngoEl = document.getElementById("ngoPage");
+
+        if (savedPage === "home") {
+            if (homeEl) homeEl.classList.remove("hidden");
+            if (donorEl) donorEl.classList.add("hidden");
+            if (ngoEl) ngoEl.classList.add("hidden");
+        } else if (currentUser.role === "donor") {
+            if (homeEl) homeEl.classList.add("hidden");
+            if (ngoEl) ngoEl.classList.add("hidden");
+            if (donorEl) donorEl.classList.remove("hidden");
+            const name = currentUser.name || "Donor";
+            const nameEl = document.getElementById("donorName");
+            const topNameEl = document.getElementById("donorTopName");
+            const welcomeEl = document.getElementById("donorWelcome");
+            if (nameEl) nameEl.textContent = name;
+            if (topNameEl) topNameEl.textContent = name;
+            if (welcomeEl) welcomeEl.textContent = name;
+        } else if (currentUser.role === "ngo") {
+            if (homeEl) homeEl.classList.add("hidden");
+            if (donorEl) donorEl.classList.add("hidden");
+            if (ngoEl) ngoEl.classList.remove("hidden");
+            const name = currentUser.name || "NGO Organization";
+            const nameEl = document.getElementById("ngoName");
+            const topNameEl = document.getElementById("ngoTopName");
+            const welcomeEl = document.getElementById("ngoWelcome");
+            if (nameEl) nameEl.textContent = name;
+            if (topNameEl) topNameEl.textContent = name;
+            if (welcomeEl) welcomeEl.textContent = name;
+        }
+    }
+}
+
 document.addEventListener("DOMContentLoaded", async function () {
+    // Immediately render cached authentication state to prevent logged-out UI flash
+    renderNavAuth();
+    initActivePageView();
+
     initFormDates();
     loadDarkMode();
     setupImageUpload();
@@ -167,22 +219,39 @@ function initHeroSlideshow() {
 }
 
 async function syncSessionWithBackend() {
-    if (authToken) {
-        try {
-            const res = await API.get("/auth/me");
-            if (res.user) {
-                currentUser = res.user;
-                localStorage.setItem("foodshareCurrentUser", JSON.stringify(currentUser));
-            }
-        } catch {
-            // Token expired or invalid
+    if (!authToken || !currentUser) {
+        currentUser = null;
+        authToken = null;
+        localStorage.removeItem("foodshareCurrentUser");
+        localStorage.removeItem("foodshareToken");
+        sessionStorage.removeItem("foodshareActivePage");
+        renderNavAuth();
+        return;
+    }
+
+    try {
+        const res = await API.get("/auth/me");
+        if (res && res.user) {
+            currentUser = res.user;
+            localStorage.setItem("foodshareCurrentUser", JSON.stringify(currentUser));
+            renderNavAuth();
+        }
+    } catch (err) {
+        if (err && err.status === 401) {
+            // Truly invalid or expired session on server
             currentUser = null;
             authToken = null;
             localStorage.removeItem("foodshareCurrentUser");
             localStorage.removeItem("foodshareToken");
+            sessionStorage.removeItem("foodshareActivePage");
+            renderNavAuth();
+            showPage("home");
+            showToast("Your session has expired. Please log in again.");
+        } else {
+            console.warn("Could not verify session with server, keeping cached session:", err.message);
+            renderNavAuth();
         }
     }
-    renderNavAuth();
 }
 
 async function loadInitialData() {
@@ -193,11 +262,16 @@ async function loadInitialData() {
 
     if (currentUser) {
         await loadNotificationsFromServer();
-        if (currentUser.role === "donor") {
+        const savedPage = sessionStorage.getItem("foodshareActivePage");
+        if (savedPage === "home") {
+            showPage("home");
+        } else if (currentUser.role === "donor") {
             await showDonorDashboard();
         } else if (currentUser.role === "ngo") {
             await showNGODashboard();
         }
+    } else {
+        showPage("home");
     }
 }
 
@@ -225,12 +299,24 @@ function setupLiveSync() {
 /* ================= SERVER DATA LOADERS ================= */
 
 async function loadStatsFromServer(showLoader = true) {
+    const foodElement = document.getElementById("heroFood");
+    const mealsElement = document.getElementById("heroMeals");
+    const donationsElement = document.getElementById("heroDonations");
+
+    if (showLoader && foodElement && !foodElement.dataset.loaded) {
+        foodElement.innerHTML = `<span class="stat-spinner">⏳</span>`;
+        if (mealsElement) mealsElement.innerHTML = `<span class="stat-spinner">⏳</span>`;
+        if (donationsElement) donationsElement.innerHTML = `<span class="stat-spinner">⏳</span>`;
+    }
+
     try {
         const stats = await API.get("/stats");
         renderHomeStats(stats);
     } catch (err) {
         console.warn("Could not load stats from server:", err);
-        renderHomeStats({ totalFood: 0, totalMeals: 0, totalDonations: 0 });
+        if (foodElement && !foodElement.dataset.loaded) foodElement.textContent = "—";
+        if (mealsElement && !mealsElement.dataset.loaded) mealsElement.textContent = "—";
+        if (donationsElement && !donationsElement.dataset.loaded) donationsElement.textContent = "—";
     }
 }
 
@@ -302,6 +388,7 @@ async function refreshData() {
 
 function showPage(page) {
     if (page === "home") {
+        sessionStorage.setItem("foodshareActivePage", "home");
         document.getElementById("homePage").classList.remove("hidden");
         document.getElementById("donorPage").classList.add("hidden");
         document.getElementById("ngoPage").classList.add("hidden");
@@ -407,13 +494,24 @@ function renderHomeStats(stats) {
     const mealsElement = document.getElementById("heroMeals");
     const donationsElement = document.getElementById("heroDonations");
 
-    const totalFood = Number(stats?.totalFood || 0);
-    const totalMeals = Number(stats?.totalMeals || 0);
-    const totalDonations = Number(stats?.totalDonations || 0);
+    if (!stats || typeof stats !== "object") return;
 
-    if (foodElement) foodElement.textContent = `${totalFood.toFixed(1)} kg`;
-    if (mealsElement) mealsElement.textContent = totalMeals.toLocaleString();
-    if (donationsElement) donationsElement.textContent = totalDonations;
+    const totalFood = Number(stats.totalFood ?? stats.completedFood ?? 0);
+    const totalMeals = Number(stats.totalMeals ?? 0);
+    const totalDonations = Number(stats.totalDonations ?? stats.completedCount ?? 0);
+
+    if (foodElement) {
+        foodElement.dataset.loaded = "true";
+        foodElement.textContent = `${totalFood.toFixed(1)} kg`;
+    }
+    if (mealsElement) {
+        mealsElement.dataset.loaded = "true";
+        mealsElement.textContent = totalMeals.toLocaleString();
+    }
+    if (donationsElement) {
+        donationsElement.dataset.loaded = "true";
+        donationsElement.textContent = totalDonations.toLocaleString();
+    }
 }
 
 function updateHomeStatsLocal() {
@@ -1480,6 +1578,7 @@ document.getElementById("authForm").addEventListener("submit", async function (e
 /* ================= DONOR DASHBOARD ================= */
 
 async function showDonorDashboard() {
+    sessionStorage.setItem("foodshareActivePage", "donor");
     document.getElementById("homePage").classList.add("hidden");
     document.getElementById("ngoPage").classList.add("hidden");
     document.getElementById("donorPage").classList.remove("hidden");
@@ -2770,6 +2869,7 @@ function renderDonorNotifications() {
 /* ================= NGO DASHBOARD ================= */
 
 async function showNGODashboard() {
+    sessionStorage.setItem("foodshareActivePage", "ngo");
     document.getElementById("homePage").classList.add("hidden");
     document.getElementById("donorPage").classList.add("hidden");
     document.getElementById("ngoPage").classList.remove("hidden");
@@ -3056,8 +3156,14 @@ function ngoFoodItem(donation) {
 }
 
 async function acceptDonation(id) {
-    if (!currentUser) {
-        showToast("Please login as an NGO first.");
+    const token = localStorage.getItem("foodshareToken");
+    if (!currentUser || !token) {
+        showToast("Your session has expired. Please login as an NGO. 🏢");
+        openRoleModal("ngo");
+        return;
+    }
+    if (currentUser.role !== "ngo") {
+        showToast("Only registered NGOs can accept food donations. 🏢");
         return;
     }
 
@@ -3475,6 +3581,7 @@ async function logout() {
     authToken = null;
     localStorage.removeItem("foodshareCurrentUser");
     localStorage.removeItem("foodshareToken");
+    sessionStorage.removeItem("foodshareActivePage");
 
     document.getElementById("donorPage").classList.add("hidden");
     document.getElementById("ngoPage").classList.add("hidden");
