@@ -208,10 +208,14 @@ function initSchema() {
         console.warn('Donations migration note:', migErr.message);
     }
 
-    // Seed default users and donations if empty
-    const userCount = db.prepare('SELECT COUNT(*) as count FROM users;').get().count;
-    if (userCount === 0) {
-        seedInitialData();
+    // Seed default users and donations if empty on initial install
+    const isSeeded = getSetting('db_seeded');
+    if (!isSeeded) {
+        const userCount = db.prepare('SELECT COUNT(*) as count FROM users;').get().count;
+        if (userCount === 0) {
+            seedInitialData();
+        }
+        setSetting('db_seeded', '1');
     }
 }
 
