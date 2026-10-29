@@ -154,6 +154,11 @@
                             <span>Donations</span>
                         </div>
 
+                        <div>
+                            <strong id="heroNgos">0</strong>
+                            <span>NGOs Participating</span>
+                        </div>
+
                     </div>
 
                 </div>
@@ -991,6 +996,10 @@
                     ⚙️ Settings
                 </button>
 
+                <button class="side-link" onclick="openNGOOnboardingModal()">
+                    📋 NGO Profile &amp; Verification
+                </button>
+
             </nav>
 
             <button class="logout-side" onclick="logout()">
@@ -1022,10 +1031,28 @@
 
                     </div>
 
-                    <button class="btn btn-primary" onclick="ngoTab('available')">
-                        View Available Food
-                    </button>
+                    <div style="display: flex; gap: 10px;">
+                        <button class="btn btn-secondary" onclick="openNGOOnboardingModal()">
+                            📋 NGO Profile
+                        </button>
+                        <button class="btn btn-primary" onclick="ngoTab('available')">
+                            View Available Food
+                        </button>
+                    </div>
 
+                </div>
+
+                <!-- NGO Verification Status Banner -->
+                <div id="ngoVerificationBanner" class="ngo-verification-banner pending" style="margin-top: 18px;">
+                    <div>
+                        <strong id="ngoBannerStatusTitle">⏳ Legal Verification: Pending Review</strong>
+                        <p id="ngoBannerStatusDesc" style="margin: 4px 0 0; font-size: 13px; opacity: 0.9;">
+                            Email OTP is verified. Once organization documentation is approved, your NGO can claim donations within 15 km.
+                        </p>
+                    </div>
+                    <button type="button" class="btn btn-secondary" onclick="openNGOOnboardingModal()" style="font-size: 12px; padding: 8px 14px; white-space: nowrap;">
+                        📋 Edit NGO Profile &amp; Pin
+                    </button>
                 </div>
 
 
@@ -1554,6 +1581,342 @@
 
         </form>
 
+    </div>
+
+
+    <!-- ================= REGISTRATION OTP VERIFICATION MODAL ================= -->
+    <div id="registerOtpModal" class="modal-overlay hidden" onclick="handleModalOverlayClick(event, 'registerOtpModal')">
+        <div class="form" onclick="event.stopPropagation()" style="max-width: 440px;">
+            <button type="button" class="modal-close" onclick="closeModal('registerOtpModal')" aria-label="Close dialog">×</button>
+
+            <div class="modal-title" style="text-align: left; margin-bottom: 8px;">
+                <span class="eyebrow">EMAIL VERIFICATION</span>
+                <h2 style="font-size: 22px; margin: 4px 0 2px;">Enter 6-Digit Code</h2>
+                <p style="font-size: 13px; margin: 0; color: var(--muted);">
+                    We sent a verification code to <strong id="registerOtpTargetEmail" style="color: var(--ink);"></strong>
+                </p>
+            </div>
+
+            <div id="registerOtpAlert" class="warning-box" style="display:none; margin: 12px 0; font-size: 13px; padding: 10px 14px; border-radius: 8px; line-height: 1.4; background:#fffbeb; color:#92400e; border:1px solid #fde68a;"></div>
+
+            <div class="flex-column" style="margin-top: 14px;">
+                <label style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">6-Digit OTP Code</label>
+                <div class="inputForm" style="height: 48px;">
+                    <span style="font-size: 18px; margin-right: 6px;">🔑</span>
+                    <input
+                        id="registerOtpInput"
+                        class="input"
+                        type="text"
+                        maxlength="6"
+                        pattern="\d{6}"
+                        placeholder="123456"
+                        autocomplete="one-time-code"
+                        inputmode="numeric"
+                        style="letter-spacing: 6px; font-size: 20px; font-weight: 700; text-align: center; font-family: monospace;"
+                    >
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px; font-size: 12px; color: var(--muted);">
+                    <span id="registerOtpTimerText">⏱️ Expires in <strong>05:00</strong></span>
+                    <button type="button" id="registerOtpResendBtn" class="link-btn" onclick="resendRegisterOtp()" style="font-size: 12px; color: var(--green); text-decoration: underline; background: none; border: none; padding: 0;">
+                        Resend Code
+                    </button>
+                </div>
+            </div>
+
+            <button class="button-submit" type="button" id="registerOtpVerifyBtn" onclick="submitRegisterOtpVerify()" style="margin-top: 20px;">
+                Verify &amp; Activate Account →
+            </button>
+
+            <p class="p" style="margin-top: 14px; text-align: center;">
+                Need to change details? <span class="span" onclick="backToSignupForm()">Back to Sign Up</span>
+            </p>
+        </div>
+    </div>
+
+
+    <!-- ================= NGO 5-STEP REGISTRATION & ONBOARDING MODAL ================= -->
+    <div id="ngoOnboardingModal" class="modal-overlay hidden" onclick="handleModalOverlayClick(event, 'ngoOnboardingModal')">
+        <div class="ngo-wizard-box" onclick="event.stopPropagation()">
+            <button type="button" class="modal-close" onclick="closeModal('ngoOnboardingModal')" aria-label="Close dialog">×</button>
+
+            <div class="modal-title" style="text-align: left; margin-bottom: 6px;">
+                <span class="eyebrow">NGO ONBOARDING &amp; VERIFICATION</span>
+                <h2 style="font-size: 22px; margin: 4px 0 2px;">Organization Profile &amp; Verification</h2>
+                <p style="font-size: 13px; margin: 0; color: var(--muted);">
+                    Complete all 5 steps to verify your NGO and unlock food redistribution.
+                </p>
+            </div>
+
+            <!-- 5-Step Stepper Header -->
+            <div class="ngo-stepper">
+                <div class="ngo-step-item active" id="ngoStepNav1" onclick="jumpToNgoStep(1)">
+                    <div class="ngo-step-circle">1</div>
+                    <span class="ngo-step-label">Organization</span>
+                </div>
+                <div class="ngo-step-item" id="ngoStepNav2" onclick="jumpToNgoStep(2)">
+                    <div class="ngo-step-circle">2</div>
+                    <span class="ngo-step-label">Location &amp; Map</span>
+                </div>
+                <div class="ngo-step-item" id="ngoStepNav3" onclick="jumpToNgoStep(3)">
+                    <div class="ngo-step-circle">3</div>
+                    <span class="ngo-step-label">Contact &amp; OTP</span>
+                </div>
+                <div class="ngo-step-item" id="ngoStepNav4" onclick="jumpToNgoStep(4)">
+                    <div class="ngo-step-circle">4</div>
+                    <span class="ngo-step-label">Documents</span>
+                </div>
+                <div class="ngo-step-item" id="ngoStepNav5" onclick="jumpToNgoStep(5)">
+                    <div class="ngo-step-circle">5</div>
+                    <span class="ngo-step-label">Capabilities</span>
+                </div>
+            </div>
+
+            <div id="ngoOnboardAlert" class="warning-box" style="display:none; margin: 10px 0; font-size: 13px; padding: 10px 14px; border-radius: 8px;"></div>
+
+            <form id="ngoOnboardingForm" onsubmit="event.preventDefault(); submitNgoOnboarding();">
+
+                <!-- STEP 1: ORGANIZATION DETAILS -->
+                <div class="ngo-step-content" id="ngoStep1">
+                    <h3 style="font-size: 16px; margin: 0 0 14px; color: var(--ink);">Step 1: Organization Details</h3>
+                    <div class="ngo-form-grid">
+                        <div class="flex-column">
+                            <label>Official NGO Name *</label>
+                            <input class="input" type="text" id="ngoOrgName" placeholder="e.g. Hope Community Shelter" required>
+                        </div>
+                        <div class="flex-column">
+                            <label>Organization Type *</label>
+                            <select class="input" id="ngoOrgType" style="height: 44px;">
+                                <option value="Registered Trust">Registered Trust</option>
+                                <option value="Society">Society (Societies Registration Act)</option>
+                                <option value="Section 8 Company">Section 8 Company (Companies Act)</option>
+                                <option value="Charitable Foundation">Charitable Foundation</option>
+                                <option value="Community Kitchen / Food Bank">Community Kitchen / Food Bank</option>
+                                <option value="Other Non-Profit">Other Non-Profit</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="ngo-form-grid">
+                        <div class="flex-column">
+                            <label>Registration Number (if applicable)</label>
+                            <input class="input" type="text" id="ngoRegNumber" placeholder="e.g. TRUST-MH-2021-998">
+                        </div>
+                        <div class="flex-column">
+                            <label>Year Established</label>
+                            <input class="input" type="number" id="ngoYearEstablished" min="1900" max="2026" placeholder="e.g. 2018">
+                        </div>
+                    </div>
+
+                    <div class="flex-column" style="margin-bottom: 16px;">
+                        <label>Organization Description &amp; Mission</label>
+                        <textarea class="input" id="ngoDescription" rows="3" placeholder="Briefly describe your NGO's mission, communities served, and food distribution activities..." style="resize: vertical;"></textarea>
+                    </div>
+
+                    <div class="ngo-form-grid">
+                        <div class="flex-column">
+                            <label>Official Website (Optional)</label>
+                            <input class="input" type="url" id="ngoWebsite" placeholder="https://example-ngo.org">
+                        </div>
+                        <div class="flex-column">
+                            <label>Logo / Photo URL (Optional)</label>
+                            <input class="input" type="text" id="ngoLogo" placeholder="https://images.unsplash.com/...">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- STEP 2: LOCATION & MAP CONFIRMATION -->
+                <div class="ngo-step-content hidden" id="ngoStep2">
+                    <h3 style="font-size: 16px; margin: 0 0 14px; color: var(--ink);">Step 2: Location &amp; Map Coordinates</h3>
+                    <p style="font-size: 13px; color: var(--muted); margin-bottom: 12px;">
+                        Click on the interactive map or drag the pin to set your exact shelter/distribution location. Distance to food donations is calculated straight-line from these confirmed coordinates.
+                    </p>
+
+                    <div class="ngo-form-grid">
+                        <div class="flex-column">
+                            <label>Country *</label>
+                            <input class="input" type="text" id="ngoCountry" value="India" required>
+                        </div>
+                        <div class="flex-column">
+                            <label>State / Province *</label>
+                            <input class="input" type="text" id="ngoState" placeholder="e.g. Maharashtra" required>
+                        </div>
+                        <div class="flex-column">
+                            <label>City *</label>
+                            <input class="input" type="text" id="ngoCity" placeholder="e.g. Mumbai" required>
+                        </div>
+                    </div>
+
+                    <div class="ngo-form-grid">
+                        <div class="flex-column">
+                            <label>Area / Locality</label>
+                            <input class="input" type="text" id="ngoArea" placeholder="e.g. Mumbai Central / Byculla">
+                        </div>
+                        <div class="flex-column">
+                            <label>Postal / PIN Code *</label>
+                            <input class="input" type="text" id="ngoPincode" placeholder="e.g. 400008" required>
+                        </div>
+                    </div>
+
+                    <div class="flex-column" style="margin-bottom: 12px;">
+                        <label>Complete Street Address *</label>
+                        <input class="input" type="text" id="ngoAddress" placeholder="Building, Street name, Landmark" required>
+                    </div>
+
+                    <!-- Interactive Map Picker -->
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
+                        <label style="font-weight: 600; font-size: 13px;">📍 Confirm Map Location (Drag Pin)</label>
+                        <div class="ngo-coord-pill">
+                            <span>Lat: <strong id="ngoLatDisplay">18.9750</strong></span>
+                            <span>Lng: <strong id="ngoLngDisplay">72.8258</strong></span>
+                        </div>
+                    </div>
+                    <div id="ngoLocationPickerMap" class="ngo-map-picker-container"></div>
+                    <input type="hidden" id="ngoLatitude" value="18.9750">
+                    <input type="hidden" id="ngoLongitude" value="72.8258">
+                </div>
+
+                <!-- STEP 3: CONTACT DETAILS & EMAIL OTP -->
+                <div class="ngo-step-content hidden" id="ngoStep3">
+                    <h3 style="font-size: 16px; margin: 0 0 14px; color: var(--ink);">Step 3: Authorized Contact Details</h3>
+
+                    <div class="ngo-form-grid">
+                        <div class="flex-column">
+                            <label>Official Registered Email</label>
+                            <div class="inputForm" style="background: var(--canvas);">
+                                <span style="font-size: 16px; margin-right: 6px;">✉️</span>
+                                <input class="input" type="email" id="ngoContactEmail" readonly style="cursor: not-allowed; opacity: 0.9;">
+                            </div>
+                            <small style="color: var(--green); font-size: 11px; margin-top: 4px; font-weight: 600;">
+                                ✅ Authenticated &amp; Verified via 6-Digit Email OTP
+                            </small>
+                        </div>
+                        <div class="flex-column">
+                            <label>Official Phone Number *</label>
+                            <input class="input" type="tel" id="ngoPhone" placeholder="e.g. +91 98200 11223" required>
+                        </div>
+                    </div>
+
+                    <div class="ngo-form-grid">
+                        <div class="flex-column">
+                            <label>Authorized Contact Person's Name *</label>
+                            <input class="input" type="text" id="ngoContactPerson" placeholder="Full legal name" required>
+                        </div>
+                        <div class="flex-column">
+                            <label>Contact Person's Designation *</label>
+                            <input class="input" type="text" id="ngoContactDesignation" placeholder="e.g. Managing Trustee / Shelter Manager" required>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- STEP 4: NGO DOCUMENT VERIFICATION -->
+                <div class="ngo-step-content hidden" id="ngoStep4">
+                    <h3 style="font-size: 16px; margin: 0 0 14px; color: var(--ink);">Step 4: Legal Document Verification</h3>
+
+                    <div class="warning-box" style="margin-bottom: 16px; background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; padding: 12px 16px; border-radius: 10px; font-size: 13px;">
+                        <strong>🛡️ Verification Policy:</strong> Email OTP verifies your user identity, but legal organization verification requires valid documentation. New registrations start with <strong>Pending</strong> status until verified by our compliance team.
+                    </div>
+
+                    <div class="flex-column" style="margin-bottom: 16px;">
+                        <label>Upload Registration Certificate / Legal Proof (PDF, JPG, PNG)</label>
+                        <div class="inputForm" style="height: auto; padding: 10px; flex-direction: column; align-items: flex-start; gap: 8px;">
+                            <input type="file" id="ngoDocFile" accept=".pdf,image/png,image/jpeg" onchange="handleNgoDocUpload(event)" style="font-size: 13px;">
+                            <input type="hidden" id="ngoDocUrl" value="">
+                            <input type="hidden" id="ngoDocName" value="">
+                            <span id="ngoDocNameDisplay" style="font-size: 12px; color: var(--muted);">No document uploaded yet</span>
+                        </div>
+                    </div>
+
+                    <div class="flex-column">
+                        <label>Current Legal Verification Status</label>
+                        <div style="display: flex; align-items: center; gap: 10px; margin-top: 6px;">
+                            <span id="ngoModalStatusBadge" class="status" style="font-size: 12px; padding: 4px 10px;">Pending Review</span>
+                            <span style="font-size: 12px; color: var(--muted);">Verified status allows claiming donations within 15 km.</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- STEP 5: FOOD COLLECTION CAPABILITIES -->
+                <div class="ngo-step-content hidden" id="ngoStep5">
+                    <h3 style="font-size: 16px; margin: 0 0 14px; color: var(--ink);">Step 5: Food Collection Capabilities</h3>
+
+                    <label style="font-size: 13px; font-weight: 600;">Food Categories Accepted:</label>
+                    <div class="ngo-checkbox-grid">
+                        <label class="ngo-checkbox-card">
+                            <input type="checkbox" name="ngoCategory" value="Cooked Food" checked>
+                            <span>Cooked Food</span>
+                        </label>
+                        <label class="ngo-checkbox-card">
+                            <input type="checkbox" name="ngoCategory" value="Packaged Food" checked>
+                            <span>Packaged Food</span>
+                        </label>
+                        <label class="ngo-checkbox-card">
+                            <input type="checkbox" name="ngoCategory" value="Bakery Items" checked>
+                            <span>Bakery Items</span>
+                        </label>
+                        <label class="ngo-checkbox-card">
+                            <input type="checkbox" name="ngoCategory" value="Fruits" checked>
+                            <span>Fruits</span>
+                        </label>
+                        <label class="ngo-checkbox-card">
+                            <input type="checkbox" name="ngoCategory" value="Vegetables" checked>
+                            <span>Vegetables</span>
+                        </label>
+                        <label class="ngo-checkbox-card">
+                            <input type="checkbox" name="ngoCategory" value="Dairy Products" checked>
+                            <span>Dairy Products</span>
+                        </label>
+                    </div>
+
+                    <div class="ngo-form-grid">
+                        <div class="flex-column">
+                            <label>Maximum Collection Quantity (kg per batch)</label>
+                            <input class="input" type="number" id="ngoMaxQuantity" min="1" max="5000" value="100" placeholder="100">
+                        </div>
+                        <div class="flex-column">
+                            <label>Operating Days &amp; Hours</label>
+                            <input class="input" type="text" id="ngoOperatingHours" value="Mon-Sat 8:00 AM - 8:00 PM" placeholder="e.g. Daily 9AM-9PM">
+                        </div>
+                    </div>
+
+                    <div class="ngo-form-grid">
+                        <div class="flex-column">
+                            <label>Collection Time Preferences</label>
+                            <input class="input" type="text" id="ngoCollectionTimePref" value="Morning & Afternoon (Within 2 hrs)" placeholder="e.g. Afternoon / Evening">
+                        </div>
+                    </div>
+
+                    <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-top: 10px;">
+                        <label class="ngo-checkbox-card" style="flex: 1;">
+                            <input type="checkbox" id="ngoHasRefrigeration" checked>
+                            <span>Refrigeration / Cold Storage Available ❄️</span>
+                        </label>
+                        <label class="ngo-checkbox-card" style="flex: 1;">
+                            <input type="checkbox" id="ngoHasTransport" checked>
+                            <span>Pickup Vehicle / Transport Available 🚐</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Footer Navigation Buttons -->
+                <div class="ngo-wizard-footer">
+                    <button type="button" class="btn btn-secondary" id="ngoPrevStepBtn" onclick="prevNgoStep()" style="display: none;">
+                        ← Previous
+                    </button>
+                    <div style="margin-left: auto; display: flex; gap: 10px;">
+                        <button type="button" class="btn btn-secondary" onclick="closeModal('ngoOnboardingModal')">
+                            Save &amp; Close
+                        </button>
+                        <button type="button" class="btn btn-primary" id="ngoNextStepBtn" onclick="nextNgoStep()">
+                            Next Step →
+                        </button>
+                        <button type="submit" class="btn btn-primary" id="ngoSubmitBtn" style="display: none;">
+                            Submit Registration Profile ✓
+                        </button>
+                    </div>
+                </div>
+
+            </form>
+        </div>
     </div>
 
 

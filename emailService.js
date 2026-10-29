@@ -1,3 +1,7 @@
+try {
+    require('dotenv').config();
+} catch {}
+
 const { Resend } = require('resend');
 
 /**
@@ -54,17 +58,32 @@ function clearTestEmails() {
 }
 
 /**
- * Build professional branded HTML email template for ShareBite password reset
+ * Build professional branded HTML email template for ShareBite OTP emails
  */
-function buildResetEmailHtml({ userName, otpCode }) {
+function buildOtpEmailHtml({ userName, otpCode, type = 'reset' }) {
     const name = userName ? userName.trim() : 'Valued Member';
+    
+    let subjectTitle = 'Password Reset OTP';
+    let leadMessage = 'We received a request to reset the password for your ShareBite account. Please use the verification code below to authorize your password change.';
+    let noteText = 'If you did not request a password reset, please disregard this email. Your password and account remain completely safe and unchanged.';
+
+    if (type === 'registration' || type === 'verification') {
+        subjectTitle = 'Email Verification Code';
+        leadMessage = 'Thank you for signing up for ShareBite! Please use the 6-digit verification code below to verify your email address and activate your account.';
+        noteText = 'If you did not sign up for a ShareBite account, you can safely ignore this email.';
+    } else if (type === 'ngo_verification') {
+        subjectTitle = 'NGO Registration Verification';
+        leadMessage = 'Welcome to ShareBite NGO Onboarding! Please verify your official contact email using the 6-digit verification code below.';
+        noteText = 'This code verifies the official email for your NGO organization profile.';
+    }
+
     return `
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ShareBite - Password Reset OTP</title>
+  <title>ShareBite - ${subjectTitle}</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f6f8; margin: 0; padding: 20px; color: #1e293b; }
     .container { max-width: 540px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }
@@ -92,12 +111,10 @@ function buildResetEmailHtml({ userName, otpCode }) {
     </div>
     <div class="content">
       <div class="greeting">Hello, ${name}</div>
-      <p class="message">
-        We received a request to reset the password for your ShareBite account. Please use the verification code below to authorize your password change.
-      </p>
+      <p class="message">${leadMessage}</p>
       
       <div class="otp-card">
-        <div class="otp-label">Your One-Time Passcode</div>
+        <div class="otp-label">Your 6-Digit One-Time Code</div>
         <div class="otp-code">${otpCode}</div>
         <div class="otp-expiry">⏱️ Expires in 5 minutes (single-use)</div>
       </div>
@@ -109,7 +126,7 @@ function buildResetEmailHtml({ userName, otpCode }) {
       </div>
 
       <p class="message" style="font-size: 13px; color: #64748b; margin-bottom: 0;">
-        If you did not request a password reset, please disregard this email. Your password and account remain completely safe and unchanged.
+        ${noteText}
       </p>
     </div>
     <div class="footer">
@@ -132,30 +149,38 @@ function formatFromAddress(from) {
 }
 
 /**
- * Send password reset OTP email using the official Resend SDK
+ * Send OTP verification email using official Resend SDK
  * @param {Object} options
  * @param {string} options.to - Recipient email
  * @param {string} options.userName - Recipient name
  * @param {string} options.otp - 6-digit plain OTP
+ * @param {string} [options.type='reset'] - 'reset' | 'registration' | 'ngo_verification'
  * @param {Object} [options.overrideConfig] - Optional config override for testing
- * @returns {Promise<{ success: boolean, provider: string, messageId?: string, error?: string }>}
+ * @returns {Promise<{ success: boolean, provider: string, messageId?: string, error?: string, isSandboxRestriction?: boolean }>}
  */
-async function sendPasswordResetEmail({ to, userName, otp, overrideConfig = null }) {
+async function sendOtpEmail({ to, userName, otp, type = 'reset', overrideConfig = null }) {
     if (!to || !otp) {
         throw new Error('Recipient email and OTP are required.');
     }
 
     const config = overrideConfig || validateConfig();
 
-    const subject = 'ShareBite - Password Reset Verification Code';
-    const textContent = `Your ShareBite password reset verification code is: ${otp}\n\nThis single-use code expires in 5 minutes.\nIf you did not request this, please safely ignore this email.\nNever share this code with anyone.`;
-    const htmlContent = buildResetEmailHtml({ userName, otpCode: otp });
+    let subject = 'ShareBite - Password Reset Verification Code';
+    if (type === 'registration' || type === 'verification') {
+        subject = 'ShareBite - Verify Your Email Address';
+    } else if (type === 'ngo_verification') {
+        subject = 'ShareBite - NGO Registration Verification Code';
+    }
+
+    const textContent = `Your ShareBite verification code is: ${otp}\n\nThis single-use code expires in 5 minutes.\nIf you did not request this, please safely ignore this email.\nNever share this code with anyone.`;
+    const htmlContent = buildOtpEmailHtml({ userName, otpCode: otp, type });
 
     // Store in internal test store for test assertions
     _testSentEmails.push({
         to,
         userName,
         otp,
+        type,
         sentAt: new Date().toISOString()
     });
 
@@ -184,11 +209,23 @@ async function sendPasswordResetEmail({ to, userName, otp, overrideConfig = null
         });
 
         if (error) {
+            const isSandbox = Boolean(
+                (error.message && (
+                    error.message.includes('only send testing emails to your own email address') ||
+                    error.message.includes('testing email address') ||
+                    error.message.includes('verify a domain')
+                )) ||
+                error.name === 'validation_error' ||
+                error.statusCode === 403 ||
+                (error.statusCode === 422 && error.message && error.message.includes('testing email'))
+            );
+
             console.error('[EmailService] Resend API error:', error.message);
             return {
                 success: false,
                 provider: 'resend',
-                error: error.message
+                error: error.message,
+                isSandboxRestriction: isSandbox
             };
         }
 
@@ -207,10 +244,19 @@ async function sendPasswordResetEmail({ to, userName, otp, overrideConfig = null
     }
 }
 
+/**
+ * Backward compatibility wrapper for password reset emails
+ */
+async function sendPasswordResetEmail(options) {
+    return sendOtpEmail({ ...options, type: 'reset' });
+}
+
 module.exports = {
     validateConfig,
+    sendOtpEmail,
     sendPasswordResetEmail,
-    buildResetEmailHtml,
+    buildOtpEmailHtml,
+    buildResetEmailHtml: (opts) => buildOtpEmailHtml({ ...opts, type: 'reset' }),
     formatFromAddress,
     getLastSentEmailForTesting,
     clearTestEmails

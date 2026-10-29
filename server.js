@@ -344,6 +344,208 @@ async function requestHandler(req, res) {
                 return sendJson(res, 200, stats);
             }
 
+            // POST /api/auth/register-otp (Send 6-digit registration OTP)
+            if (pathname === '/api/auth/register-otp' && method === 'POST') {
+                const body = await readJsonBody(req);
+                const { name, email, password, role } = body;
+
+                if (!name || !email || !password || !role) {
+                    return sendError(res, 400, 'Name, email, password, and role are required.');
+                }
+                const cleanEmail = email.trim().toLowerCase();
+                const cleanRole = role.toLowerCase();
+                if (cleanRole !== 'donor' && cleanRole !== 'ngo') {
+                    return sendError(res, 400, 'Role must be either donor or ngo.');
+                }
+                if (password.length < 8) {
+                    return sendError(res, 400, 'Password must be at least 8 characters long.');
+                }
+
+                // Check if user already exists
+                const existing = db.getUserByEmail(cleanEmail);
+                if (existing) {
+                    return sendError(res, 409, 'An account with this email already exists. Please log in or reset your password.');
+                }
+
+                // Check resend cooldown
+                const existingChallenge = db.getRegistrationChallenge(cleanEmail);
+                if (existingChallenge && existingChallenge.resend_available_at) {
+                    const cooldownRemainingMs = new Date(existingChallenge.resend_available_at).getTime() - Date.now();
+                    if (cooldownRemainingMs > 0) {
+                        const remainingSec = Math.ceil(cooldownRemainingMs / 1000);
+                        return sendJson(res, 429, {
+                            error: `Please wait ${remainingSec}s before requesting another verification code.`,
+                            retryAfter: remainingSec
+                        });
+                    }
+                }
+
+                // Generate 6-digit OTP
+                const otp = crypto.randomInt(100000, 1000000).toString();
+                const passwordHash = db.hashPassword(password);
+
+                db.createRegistrationChallenge({
+                    name: name.trim(),
+                    email: cleanEmail,
+                    passwordHash,
+                    role: cleanRole,
+                    otp
+                });
+
+                // Dispatch email via Resend
+                const emailResult = await emailService.sendOtpEmail({
+                    to: cleanEmail,
+                    userName: name.trim(),
+                    otp,
+                    type: cleanRole === 'ngo' ? 'ngo_verification' : 'registration'
+                });
+
+                if (!emailResult.success) {
+                    if (emailResult.isSandboxRestriction) {
+                        return sendJson(res, 403, {
+                            error: 'Resend Sandbox Restriction: Testing emails can only be sent to the verified account owner (pawarsharad1203@gmail.com). To send to other emails, please verify your custom domain in the Resend dashboard at https://resend.com/domains.',
+                            isSandboxRestriction: true,
+                            allowedEmail: 'pawarsharad1203@gmail.com'
+                        });
+                    }
+                    return sendJson(res, 500, {
+                        error: 'Failed to deliver verification code. Please check email provider configuration.',
+                        details: emailResult.error
+                    });
+                }
+
+                return sendJson(res, 200, {
+                    success: true,
+                    message: 'A 6-digit verification code has been sent to your email.',
+                    expiresInSeconds: 300,
+                    cooldownSeconds: 60
+                });
+            }
+
+            // POST /api/auth/register-verify (Verify 6-digit OTP and activate account)
+            if (pathname === '/api/auth/register-verify' && method === 'POST') {
+                const body = await readJsonBody(req);
+                const { email, otp } = body;
+
+                if (!email || !otp) {
+                    return sendError(res, 400, 'Email and 6-digit verification code are required.');
+                }
+                const cleanEmail = email.trim().toLowerCase();
+                const cleanOtp = String(otp).trim();
+
+                if (!/^\d{6}$/.test(cleanOtp)) {
+                    return sendError(res, 400, 'Verification code must be exactly 6 digits.');
+                }
+
+                const challenge = db.getRegistrationChallenge(cleanEmail);
+                if (!challenge) {
+                    return sendError(res, 400, 'No pending registration found for this email. Please submit the sign-up form.');
+                }
+
+                if (new Date(challenge.otp_expires_at).getTime() < Date.now()) {
+                    return sendError(res, 400, 'Verification code has expired. Please request a new code.');
+                }
+
+                if (challenge.failed_attempts >= 5) {
+                    return sendError(res, 400, 'Maximum verification attempts exceeded (5/5). Please request a new code.');
+                }
+
+                const isValid = db.verifyOtp(cleanOtp, challenge.otp_hash);
+                if (!isValid) {
+                    const updated = db.recordFailedRegistrationAttempt(challenge.id);
+                    const remaining = Math.max(0, 5 - updated.failed_attempts);
+                    if (remaining <= 0) {
+                        return sendError(res, 400, 'Maximum verification attempts exceeded. Please request a new code.');
+                    }
+                    return sendError(res, 400, `Incorrect verification code. ${remaining} attempt${remaining === 1 ? '' : 's'} remaining.`);
+                }
+
+                // OTP is valid! Create the verified user
+                try {
+                    const newUser = db.createUser(
+                        challenge.name,
+                        challenge.email,
+                        challenge.password_hash,
+                        challenge.role,
+                        true, // isVerified = true
+                        true  // preHashed = true
+                    );
+                    db.deleteRegistrationChallenge(cleanEmail);
+                    const token = db.createSession(newUser.id);
+
+                    return sendJson(res, 201, {
+                        success: true,
+                        message: 'Email verified successfully! Welcome to ShareBite.',
+                        user: newUser,
+                        token
+                    });
+                } catch (createErr) {
+                    return sendError(res, 409, createErr.message);
+                }
+            }
+
+            // POST /api/auth/resend-register-otp (Resend registration OTP)
+            if (pathname === '/api/auth/resend-register-otp' && method === 'POST') {
+                const body = await readJsonBody(req);
+                const { email } = body;
+
+                if (!email) {
+                    return sendError(res, 400, 'Email is required.');
+                }
+                const cleanEmail = email.trim().toLowerCase();
+                const challenge = db.getRegistrationChallenge(cleanEmail);
+                if (!challenge) {
+                    return sendError(res, 400, 'No pending registration found. Please sign up first.');
+                }
+
+                if (challenge.resend_available_at) {
+                    const cooldownRemainingMs = new Date(challenge.resend_available_at).getTime() - Date.now();
+                    if (cooldownRemainingMs > 0) {
+                        const remainingSec = Math.ceil(cooldownRemainingMs / 1000);
+                        return sendJson(res, 429, {
+                            error: `Please wait ${remainingSec}s before requesting another verification code.`,
+                            retryAfter: remainingSec
+                        });
+                    }
+                }
+
+                const otp = crypto.randomInt(100000, 1000000).toString();
+                db.createRegistrationChallenge({
+                    name: challenge.name,
+                    email: cleanEmail,
+                    passwordHash: challenge.password_hash,
+                    role: challenge.role,
+                    otp
+                });
+
+                const emailResult = await emailService.sendOtpEmail({
+                    to: cleanEmail,
+                    userName: challenge.name,
+                    otp,
+                    type: challenge.role === 'ngo' ? 'ngo_verification' : 'registration'
+                });
+
+                if (!emailResult.success) {
+                    if (emailResult.isSandboxRestriction) {
+                        return sendJson(res, 403, {
+                            error: 'Resend Sandbox Restriction: Testing emails can only be sent to the verified account owner (pawarsharad1203@gmail.com). To send to other emails, verify your domain at https://resend.com/domains.',
+                            isSandboxRestriction: true
+                        });
+                    }
+                    return sendJson(res, 500, {
+                        error: 'Failed to deliver verification code.',
+                        details: emailResult.error
+                    });
+                }
+
+                return sendJson(res, 200, {
+                    success: true,
+                    message: 'A new 6-digit verification code has been sent.',
+                    expiresInSeconds: 300,
+                    cooldownSeconds: 60
+                });
+            }
+
             // POST /api/auth/signup
             if (pathname === '/api/auth/signup' && method === 'POST') {
                 const body = await readJsonBody(req);
@@ -495,15 +697,32 @@ async function requestHandler(req, res) {
                     db.createPasswordResetRequest(user, otp);
 
                     // Dispatch email
+                    let deliveryWarning = null;
+                    let isSandbox = false;
                     try {
-                        await emailService.sendPasswordResetEmail({
+                        const emailResult = await emailService.sendPasswordResetEmail({
                             to: user.email,
                             userName: user.name,
                             otp
                         });
+                        if (!emailResult.success) {
+                            console.error('[Auth] Password reset email provider delivery issue:', emailResult.error);
+                            if (emailResult.isSandboxRestriction) {
+                                isSandbox = true;
+                                deliveryWarning = 'Resend Sandbox Restriction: Testing emails can only be delivered to your registered email (pawarsharad1203@gmail.com). To deliver to other emails, verify your custom domain in Resend.';
+                            }
+                        }
                     } catch (emailErr) {
                         console.error('[Auth] Failed to dispatch password reset email:', emailErr.message);
                     }
+
+                    return sendJson(res, 200, {
+                        success: true,
+                        message: 'If that email address is registered, a 6-digit verification code has been sent.',
+                        expiresInSeconds: 300,
+                        cooldownSeconds: 60,
+                        ...(isSandbox ? { isSandboxRestriction: true, warning: deliveryWarning } : {})
+                    });
                 }
 
                 // Generic response (security requirement: do not reveal whether user exists)
@@ -612,6 +831,60 @@ async function requestHandler(req, res) {
                 });
             }
 
+            // GET /api/ngo/profile (Fetch NGO profile for authenticated user)
+            if (pathname === '/api/ngo/profile' && method === 'GET') {
+                const user = getAuthUser(req);
+                if (!user) {
+                    return sendError(res, 401, 'Unauthorized');
+                }
+                const profile = db.getNGOProfileByUserId(user.id);
+                return sendJson(res, 200, { profile });
+            }
+
+            // POST /api/ngo/onboard (Submit or update 5-step NGO Onboarding)
+            if (pathname === '/api/ngo/onboard' && method === 'POST') {
+                const user = getAuthUser(req);
+                if (!user) {
+                    return sendError(res, 401, 'Please login first.');
+                }
+                if (user.role !== 'ngo') {
+                    return sendError(res, 403, 'Only NGO accounts can submit organization onboarding details.');
+                }
+
+                const body = await readJsonBody(req);
+                try {
+                    const profile = db.createOrUpdateNGOProfile(user.id, body);
+                    return sendJson(res, 200, {
+                        success: true,
+                        message: 'NGO registration details saved successfully.',
+                        profile
+                    });
+                } catch (err) {
+                    return sendError(res, 400, err.message);
+                }
+            }
+
+            // GET /api/admin/ngos (List all registered NGOs)
+            if (pathname === '/api/admin/ngos' && method === 'GET') {
+                const ngos = db.getAllNGOs();
+                return sendJson(res, 200, ngos);
+            }
+
+            // POST /api/admin/verify-ngo (Admin endpoint to update NGO verification status)
+            if (pathname === '/api/admin/verify-ngo' && method === 'POST') {
+                const body = await readJsonBody(req);
+                const { ngoUserId, status } = body;
+                if (!ngoUserId || !status) {
+                    return sendError(res, 400, 'ngoUserId and status are required.');
+                }
+                try {
+                    const result = db.updateNGOVerificationStatus(ngoUserId, status);
+                    return sendJson(res, 200, result);
+                } catch (err) {
+                    return sendError(res, 400, err.message);
+                }
+            }
+
             // GET /api/donations
             if (pathname === '/api/donations' && method === 'GET') {
                 const status = parsedUrl.searchParams.get('status');
@@ -620,6 +893,38 @@ async function requestHandler(req, res) {
                 const foodType = parsedUrl.searchParams.get('foodType');
                 const search = parsedUrl.searchParams.get('search');
                 const sort = parsedUrl.searchParams.get('sort');
+                const enforceRadiusParam = parsedUrl.searchParams.get('enforceRadius');
+
+                // Determine authenticated user for distance calculation
+                const authUser = getAuthUser(req);
+                let ngoLat = null;
+                let ngoLon = null;
+                let enforceRadius = false;
+
+                if (authUser && authUser.role === 'ngo') {
+                    const ngoProfile = db.getNGOProfileByUserId(authUser.id);
+                    if (ngoProfile && ngoProfile.latitude !== null && ngoProfile.longitude !== null) {
+                        ngoLat = ngoProfile.latitude;
+                        ngoLon = ngoProfile.longitude;
+                    }
+                    if (status === 'Available' || !status) {
+                        enforceRadius = true;
+                    }
+                }
+
+                // Support query parameters for custom or tested coordinate evaluation
+                const qLat = parsedUrl.searchParams.get('lat') || parsedUrl.searchParams.get('ngoLatitude');
+                const qLon = parsedUrl.searchParams.get('lng') || parsedUrl.searchParams.get('lon') || parsedUrl.searchParams.get('ngoLongitude');
+                if (qLat !== null && qLon !== null && !isNaN(Number(qLat)) && !isNaN(Number(qLon))) {
+                    ngoLat = Number(qLat);
+                    ngoLon = Number(qLon);
+                }
+
+                if (enforceRadiusParam !== null) {
+                    enforceRadius = enforceRadiusParam === 'true' || enforceRadiusParam === '1';
+                }
+
+                const maxDistanceKm = parsedUrl.searchParams.get('maxDistanceKm') ? Number(parsedUrl.searchParams.get('maxDistanceKm')) : 15.0;
 
                 const donations = db.getDonations({
                     status,
@@ -627,7 +932,11 @@ async function requestHandler(req, res) {
                     acceptedBy,
                     foodType,
                     search,
-                    sort
+                    sort,
+                    ngoLatitude: ngoLat,
+                    ngoLongitude: ngoLon,
+                    enforceRadius,
+                    maxDistanceKm
                 });
                 return sendJson(res, 200, donations);
             }

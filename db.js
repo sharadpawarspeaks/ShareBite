@@ -135,12 +135,63 @@ function initSchema() {
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS registration_challenges (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT UNIQUE NOT NULL,
+            name TEXT NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('donor', 'ngo')),
+            otp_hash TEXT NOT NULL,
+            otp_expires_at TEXT NOT NULL,
+            failed_attempts INTEGER NOT NULL DEFAULT 0,
+            resend_available_at TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS ngos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL UNIQUE,
+            org_name TEXT NOT NULL,
+            org_type TEXT NOT NULL,
+            reg_number TEXT,
+            year_established INTEGER,
+            description TEXT,
+            website TEXT,
+            logo TEXT,
+            country TEXT DEFAULT 'India',
+            state TEXT,
+            city TEXT,
+            area TEXT,
+            address TEXT NOT NULL,
+            pincode TEXT,
+            latitude REAL NOT NULL,
+            longitude REAL NOT NULL,
+            phone TEXT NOT NULL,
+            contact_person TEXT NOT NULL,
+            contact_designation TEXT,
+            doc_name TEXT,
+            doc_url TEXT,
+            verification_status TEXT NOT NULL DEFAULT 'pending' CHECK(verification_status IN ('pending', 'verified', 'rejected', 'suspended')),
+            accepted_categories TEXT,
+            max_quantity REAL,
+            has_refrigeration INTEGER DEFAULT 0,
+            has_transport INTEGER DEFAULT 0,
+            operating_hours TEXT,
+            collection_time_pref TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
         CREATE INDEX IF NOT EXISTS idx_donations_status ON donations(status);
         CREATE INDEX IF NOT EXISTS idx_donations_donor ON donations(donor_email);
         CREATE INDEX IF NOT EXISTS idx_donations_accepted ON donations(accepted_by_email);
         CREATE INDEX IF NOT EXISTS idx_notifications_email ON notifications(user_email);
         CREATE INDEX IF NOT EXISTS idx_password_resets_email ON password_resets(email);
         CREATE INDEX IF NOT EXISTS idx_password_resets_user ON password_resets(user_id);
+        CREATE INDEX IF NOT EXISTS idx_registration_challenges_email ON registration_challenges(email);
+        CREATE INDEX IF NOT EXISTS idx_ngos_user ON ngos(user_id);
+        CREATE INDEX IF NOT EXISTS idx_ngos_status ON ngos(verification_status);
     `);
 
     // Ensure latitude and longitude columns exist
@@ -149,6 +200,9 @@ function initSchema() {
     } catch (e) {}
     try {
         db.exec(`ALTER TABLE donations ADD COLUMN longitude REAL;`);
+    } catch (e) {}
+    try {
+        db.exec(`ALTER TABLE users ADD COLUMN is_verified INTEGER NOT NULL DEFAULT 1;`);
     } catch (e) {}
 
     // Migration: ensure donations table supports 'Expired' status and case-insensitive/new priority strings
@@ -427,22 +481,23 @@ function getUserById(id) {
     return mapUser(row);
 }
 
-function createUser(name, email, password, role) {
+function createUser(name, email, password, role, isVerified = false, preHashed = false) {
     const existing = getUserByEmail(email);
     if (existing) {
         throw new Error('An account with this email already exists.');
     }
-    const hash = hashPassword(password);
+    const hash = preHashed ? password : hashPassword(password);
     const info = db.prepare(`
-        INSERT INTO users (name, email, password_hash, role)
-        VALUES (?, ?, ?, ?);
-    `).run(name, email.toLowerCase(), hash, role);
+        INSERT INTO users (name, email, password_hash, role, is_verified)
+        VALUES (?, ?, ?, ?, ?);
+    `).run(name, email.toLowerCase(), hash, role, isVerified ? 1 : 0);
 
     return {
         id: info.lastInsertRowid,
         name,
         email: email.toLowerCase(),
-        role
+        role,
+        isVerified: Boolean(isVerified)
     };
 }
 
@@ -609,6 +664,33 @@ function deleteSession(token) {
 }
 
 // -------------------------------------------------------------
+// Distance Calculation (Haversine Formula)
+// -------------------------------------------------------------
+function calculateDistanceKm(lat1, lon1, lat2, lon2) {
+    if (lat1 === undefined || lat1 === null || lon1 === undefined || lon1 === null ||
+        lat2 === undefined || lat2 === null || lon2 === undefined || lon2 === null) {
+        return null;
+    }
+    const nLat1 = Number(lat1);
+    const nLon1 = Number(lon1);
+    const nLat2 = Number(lat2);
+    const nLon2 = Number(lon2);
+    if (isNaN(nLat1) || isNaN(nLon1) || isNaN(nLat2) || isNaN(nLon2)) {
+        return null;
+    }
+    const R = 6371; // Earth's mean radius in kilometres
+    const toRad = (deg) => (deg * Math.PI) / 180;
+    const dLat = toRad(nLat2 - nLat1);
+    const dLon = toRad(nLon2 - nLon1);
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(toRad(nLat1)) * Math.cos(toRad(nLat2)) *
+              Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const d = R * c;
+    return Math.round(d * 10) / 10;
+}
+
+// -------------------------------------------------------------
 // Donation Operations
 // -------------------------------------------------------------
 function getDonations(filters = {}) {
@@ -658,6 +740,28 @@ function getDonations(filters = {}) {
 
     const rows = db.prepare(sql).all(...params);
     let mapped = rows.map(mapDonation);
+
+    // Calculate distance and filter by radius if NGO coordinates are provided
+    if (filters.ngoLatitude !== undefined && filters.ngoLongitude !== undefined &&
+        filters.ngoLatitude !== null && filters.ngoLongitude !== null) {
+        const ngoLat = Number(filters.ngoLatitude);
+        const ngoLon = Number(filters.ngoLongitude);
+        const maxDist = filters.maxDistanceKm !== undefined ? Number(filters.maxDistanceKm) : 15.0;
+
+        mapped = mapped.map(d => {
+            const dist = calculateDistanceKm(ngoLat, ngoLon, d.latitude, d.longitude);
+            return {
+                ...d,
+                distanceKm: dist,
+                distanceText: dist !== null ? `${dist.toFixed(1)} km away` : null
+            };
+        });
+
+        // Fixed 15 km eligibility rule: include donations <= 15.0 km, exclude > 15.0 km or missing/invalid coordinates
+        if (filters.enforceRadius) {
+            mapped = mapped.filter(d => d.distanceKm !== null && d.distanceKm <= maxDist);
+        }
+    }
 
     // Expired food handling: expired food must NOT appear among Available donations
     if (filters.status === 'Available') {
@@ -797,16 +901,34 @@ function acceptDonation(donationId, ngoUser) {
         throw new Error('This donation is no longer available.');
     }
 
+    // Check verification status of NGO (if registered NGO profile exists)
+    const ngoProfile = getNGOProfileByUserId(ngoUser.id);
+    if (ngoProfile && ngoProfile.verificationStatus !== 'verified') {
+        throw new Error('Your NGO profile is currently pending administrator verification. Verified status is required to accept donations.');
+    }
+
+    // Verify 15 km Haversine distance eligibility if coordinates are present
+    if (ngoProfile && ngoProfile.latitude && ngoProfile.longitude && donation.latitude && donation.longitude) {
+        const distance = calculateDistanceKm(ngoProfile.latitude, ngoProfile.longitude, donation.latitude, donation.longitude);
+        if (distance !== null && distance > 15.0) {
+            throw new Error(`This donation is ${distance.toFixed(1)} km away, which exceeds the 15.0 km collection radius.`);
+        }
+    }
+
     const now = new Date().toISOString();
-    db.prepare(`
+    const updateResult = db.prepare(`
         UPDATE donations 
         SET status = 'Accepted', 
             accepted_by_id = ?, 
             accepted_by_name = ?, 
             accepted_by_email = ?,
             accepted_at = ?
-        WHERE id = ?;
+        WHERE id = ? AND status = 'Available';
     `).run(ngoUser.id, ngoUser.name, ngoUser.email, now, donationId);
+
+    if (updateResult.changes === 0) {
+        throw new Error('This donation is no longer available or was just accepted by another organization.');
+    }
 
     // Notify Donor
     addNotification(
@@ -928,6 +1050,12 @@ function getStats() {
     const completedCount = Number(completedRow ? (completedRow.completedCount || 0) : 0);
     const totalDonations = Number(submittedRow ? (submittedRow.totalDonations || 0) : 0);
 
+    let totalActiveVerifiedNGOs = 0;
+    try {
+        const ngoRow = db.prepare(`SELECT COUNT(*) as count FROM ngos WHERE verification_status = 'verified';`).get();
+        totalActiveVerifiedNGOs = Number(ngoRow ? ngoRow.count : 0);
+    } catch {}
+
     return {
         // Food successfully redistributed metrics (Food Shared & Meals Supported)
         totalFood: completedFood,
@@ -939,6 +1067,9 @@ function getStats() {
         totalDonations,
         submittedCount: totalDonations,
         availableCount: availableRow ? Number(availableRow.availableCount || 0) : 0,
+
+        // Distinct verified active NGOs participating worldwide
+        totalActiveVerifiedNGOs,
 
         conversionRate: '4 meals per kg of completed food',
         isLifetime: true
@@ -1171,6 +1302,291 @@ function clearPasswordResetsForTesting() {
     db.prepare('DELETE FROM password_resets;').run();
 }
 
+// -------------------------------------------------------------
+// Registration OTP Challenge Operations
+// -------------------------------------------------------------
+function createRegistrationChallenge({ name, email, passwordHash, role, otp }) {
+    const cleanEmail = email.trim().toLowerCase();
+    const otpHash = hashOtp(otp);
+    const now = Date.now();
+    const otpExpiresAt = new Date(now + 5 * 60 * 1000).toISOString();
+    const resendAvailableAt = new Date(now + 60 * 1000).toISOString();
+
+    db.prepare(`
+        INSERT INTO registration_challenges (
+            email, name, password_hash, role, otp_hash, otp_expires_at, failed_attempts, resend_available_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, datetime('now'))
+        ON CONFLICT(email) DO UPDATE SET
+            name = excluded.name,
+            password_hash = excluded.password_hash,
+            role = excluded.role,
+            otp_hash = excluded.otp_hash,
+            otp_expires_at = excluded.otp_expires_at,
+            failed_attempts = 0,
+            resend_available_at = excluded.resend_available_at,
+            created_at = datetime('now');
+    `).run(cleanEmail, name.trim(), passwordHash, role, otpHash, otpExpiresAt, resendAvailableAt);
+
+    return {
+        email: cleanEmail,
+        otpExpiresAt,
+        resendAvailableAt
+    };
+}
+
+function getRegistrationChallenge(email) {
+    if (!email) return null;
+    return db.prepare('SELECT * FROM registration_challenges WHERE LOWER(email) = LOWER(?);').get(email.trim());
+}
+
+function recordFailedRegistrationAttempt(challengeId) {
+    db.prepare('UPDATE registration_challenges SET failed_attempts = failed_attempts + 1 WHERE id = ?;').run(challengeId);
+    return db.prepare('SELECT * FROM registration_challenges WHERE id = ?;').get(challengeId);
+}
+
+function deleteRegistrationChallenge(email) {
+    if (!email) return;
+    db.prepare('DELETE FROM registration_challenges WHERE LOWER(email) = LOWER(?);').run(email.trim());
+}
+
+// -------------------------------------------------------------
+// NGO Profile Operations
+// -------------------------------------------------------------
+function createOrUpdateNGOProfile(userId, data) {
+    if (!userId) throw new Error('User ID is required.');
+    const user = getUserById(userId);
+    if (!user) throw new Error('User not found.');
+
+    const orgName = (data.orgName || user.name || '').trim();
+    if (!orgName) throw new Error('Official NGO name is required.');
+    const orgType = (data.orgType || 'Registered Trust').trim();
+    const address = (data.address || '').trim();
+    if (!address) throw new Error('Complete address is required.');
+
+    const lat = Number(data.latitude);
+    const lng = Number(data.longitude);
+    if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        throw new Error('Valid confirmed map latitude and longitude coordinates are required.');
+    }
+
+    const phone = (data.phone || '').trim();
+    if (!phone) throw new Error('Official phone number is required.');
+    const contactPerson = (data.contactPerson || '').trim();
+    if (!contactPerson) throw new Error('Authorized contact person name is required.');
+
+    const existing = db.prepare('SELECT * FROM ngos WHERE user_id = ?;').get(userId);
+    const now = new Date().toISOString();
+
+    if (existing) {
+        db.prepare(`
+            UPDATE ngos SET
+                org_name = ?,
+                org_type = ?,
+                reg_number = ?,
+                year_established = ?,
+                description = ?,
+                website = ?,
+                logo = ?,
+                country = ?,
+                state = ?,
+                city = ?,
+                area = ?,
+                address = ?,
+                pincode = ?,
+                latitude = ?,
+                longitude = ?,
+                phone = ?,
+                contact_person = ?,
+                contact_designation = ?,
+                doc_name = COALESCE(?, doc_name),
+                doc_url = COALESCE(?, doc_url),
+                accepted_categories = ?,
+                max_quantity = ?,
+                has_refrigeration = ?,
+                has_transport = ?,
+                operating_hours = ?,
+                collection_time_pref = ?,
+                updated_at = ?
+            WHERE user_id = ?;
+        `).run(
+            orgName,
+            orgType,
+            data.regNumber || null,
+            data.yearEstablished ? Number(data.yearEstablished) : null,
+            data.description || '',
+            data.website || null,
+            data.logo || null,
+            data.country || 'India',
+            data.state || '',
+            data.city || '',
+            data.area || '',
+            address,
+            data.pincode || '',
+            lat,
+            lng,
+            phone,
+            contactPerson,
+            data.contactDesignation || '',
+            data.docName || null,
+            data.docUrl || null,
+            data.acceptedCategories ? JSON.stringify(data.acceptedCategories) : '[]',
+            data.maxQuantity ? Number(data.maxQuantity) : 100,
+            data.hasRefrigeration ? 1 : 0,
+            data.hasTransport ? 1 : 0,
+            data.operatingHours || 'Mon-Sat 9AM-7PM',
+            data.collectionTimePref || 'Morning & Afternoon',
+            now,
+            userId
+        );
+    } else {
+        db.prepare(`
+            INSERT INTO ngos (
+                user_id, org_name, org_type, reg_number, year_established, description, website, logo,
+                country, state, city, area, address, pincode, latitude, longitude,
+                phone, contact_person, contact_designation, doc_name, doc_url,
+                verification_status, accepted_categories, max_quantity,
+                has_refrigeration, has_transport, operating_hours, collection_time_pref,
+                created_at, updated_at
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?,
+                'pending', ?, ?,
+                ?, ?, ?, ?,
+                ?, ?
+            );
+        `).run(
+            userId,
+            orgName,
+            orgType,
+            data.regNumber || null,
+            data.yearEstablished ? Number(data.yearEstablished) : null,
+            data.description || '',
+            data.website || null,
+            data.logo || null,
+            data.country || 'India',
+            data.state || '',
+            data.city || '',
+            data.area || '',
+            address,
+            data.pincode || '',
+            lat,
+            lng,
+            phone,
+            contactPerson,
+            data.contactDesignation || '',
+            data.docName || null,
+            data.docUrl || null,
+            data.acceptedCategories ? JSON.stringify(data.acceptedCategories) : '[]',
+            data.maxQuantity ? Number(data.maxQuantity) : 100,
+            data.hasRefrigeration ? 1 : 0,
+            data.hasTransport ? 1 : 0,
+            data.operatingHours || 'Mon-Sat 9AM-7PM',
+            data.collectionTimePref || 'Morning & Afternoon',
+            now,
+            now
+        );
+    }
+
+    return getNGOProfileByUserId(userId);
+}
+
+function getNGOProfileByUserId(userId) {
+    if (!userId) return null;
+    const row = db.prepare('SELECT * FROM ngos WHERE user_id = ?;').get(userId);
+    if (!row) return null;
+    let cats = [];
+    try { cats = JSON.parse(row.accepted_categories); } catch {}
+    return {
+        id: row.id,
+        userId: row.user_id,
+        orgName: row.org_name,
+        orgType: row.org_type,
+        regNumber: row.reg_number,
+        yearEstablished: row.year_established,
+        description: row.description,
+        website: row.website,
+        logo: row.logo,
+        country: row.country,
+        state: row.state,
+        city: row.city,
+        area: row.area,
+        address: row.address,
+        pincode: row.pincode,
+        latitude: row.latitude,
+        longitude: row.longitude,
+        phone: row.phone,
+        contactPerson: row.contact_person,
+        contactDesignation: row.contact_designation,
+        docName: row.doc_name,
+        docUrl: row.doc_url,
+        verificationStatus: row.verification_status,
+        acceptedCategories: cats,
+        maxQuantity: row.max_quantity,
+        hasRefrigeration: Boolean(row.has_refrigeration),
+        hasTransport: Boolean(row.has_transport),
+        operatingHours: row.operating_hours,
+        collectionTimePref: row.collection_time_pref,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at
+    };
+}
+
+function getNGOProfileById(id) {
+    if (!id) return null;
+    const row = db.prepare('SELECT * FROM ngos WHERE id = ?;').get(id);
+    if (!row) return null;
+    return getNGOProfileByUserId(row.user_id);
+}
+
+function updateNGOVerificationStatus(userIdOrNgoId, status) {
+    const valid = ['pending', 'verified', 'rejected', 'suspended'];
+    if (!valid.includes(status)) throw new Error('Invalid verification status');
+    db.prepare("UPDATE ngos SET verification_status = ?, updated_at = datetime('now') WHERE user_id = ? OR id = ?;").run(status, userIdOrNgoId, userIdOrNgoId);
+    return { success: true, status };
+}
+
+function getAllNGOs() {
+    const rows = db.prepare('SELECT * FROM ngos ORDER BY id DESC;').all();
+    return rows.map(r => getNGOProfileByUserId(r.user_id));
+}
+
+function ensureTestAccounts() {
+    const donorHash = hashPassword('password123');
+    const ngoHash = hashPassword('password123');
+    let donor = getUserByEmail('donor@foodshare.org');
+    if (!donor) {
+        db.prepare('INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?);')
+            .run('Community Donor', 'donor@foodshare.org', donorHash, 'donor');
+    }
+    if (!getUserByEmail('rajesh.donor@example.com')) {
+        db.prepare('INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?);')
+            .run('Rajesh Kumar', 'rajesh.donor@example.com', donorHash, 'donor');
+    }
+    if (!getUserByEmail('contact@sunnyfarms.org')) {
+        db.prepare('INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?);')
+            .run('Sunny Farms NGO', 'contact@sunnyfarms.org', ngoHash, 'ngo');
+    }
+    let ngo = getUserByEmail('ngo@foodshare.org');
+    if (!ngo) {
+        const info = db.prepare('INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?);')
+            .run('Hope Community Shelter', 'ngo@foodshare.org', ngoHash, 'ngo');
+        createOrUpdateNGOProfile(info.lastInsertRowid, {
+            orgName: 'Hope Community Shelter',
+            orgType: 'Registered Trust',
+            address: '123 Hope Way, Mumbai Central',
+            latitude: 18.9750,
+            longitude: 72.8258,
+            phone: '+91 98200 11223',
+            contactPerson: 'Director Sarah',
+            verificationStatus: 'verified'
+        });
+        updateNGOVerificationStatus(info.lastInsertRowid, 'verified');
+    }
+    // Call on load
+}
+ensureTestAccounts();
+
 // Clean up expired reset requests older than 24 hours
 try {
     db.prepare("DELETE FROM password_resets WHERE created_at < datetime('now', '-24 hours');").run();
@@ -1207,6 +1623,7 @@ module.exports = {
     setSetting,
     resetDatabase,
     // Password reset functions
+    hashPassword,
     hashOtp,
     verifyOtp,
     hashToken,
@@ -1220,5 +1637,19 @@ module.exports = {
     revokeAllSessionsForUser,
     expireResetRequestForTesting,
     clearPasswordResetsForTesting,
-    clearDonationsForTesting: () => db.prepare('DELETE FROM donations;').run()
+    clearDonationsForTesting: () => db.prepare('DELETE FROM donations;').run(),
+    // Registration Challenge functions
+    createRegistrationChallenge,
+    getRegistrationChallenge,
+    recordFailedRegistrationAttempt,
+    deleteRegistrationChallenge,
+    // NGO Profile & Distance functions
+    calculateDistanceKm,
+    createOrUpdateNGOProfile,
+    getNGOProfileByUserId,
+    getNGOProfileById,
+    updateNGOVerificationStatus,
+    getAllNGOs,
+    ensureTestAccounts
 };
+

@@ -302,11 +302,13 @@ async function loadStatsFromServer(showLoader = true) {
     const foodElement = document.getElementById("heroFood");
     const mealsElement = document.getElementById("heroMeals");
     const donationsElement = document.getElementById("heroDonations");
+    const ngosElement = document.getElementById("heroNgos");
 
-    if (showLoader && foodElement && !foodElement.dataset.loaded) {
-        foodElement.innerHTML = `<span class="stat-spinner">⏳</span>`;
-        if (mealsElement) mealsElement.innerHTML = `<span class="stat-spinner">⏳</span>`;
-        if (donationsElement) donationsElement.innerHTML = `<span class="stat-spinner">⏳</span>`;
+    if (showLoader) {
+        if (foodElement && !foodElement.dataset.loaded) foodElement.innerHTML = `<span class="stat-spinner">⏳</span>`;
+        if (mealsElement && !mealsElement.dataset.loaded) mealsElement.innerHTML = `<span class="stat-spinner">⏳</span>`;
+        if (donationsElement && !donationsElement.dataset.loaded) donationsElement.innerHTML = `<span class="stat-spinner">⏳</span>`;
+        if (ngosElement && !ngosElement.dataset.loaded) ngosElement.innerHTML = `<span class="stat-spinner">⏳</span>`;
     }
 
     try {
@@ -317,6 +319,7 @@ async function loadStatsFromServer(showLoader = true) {
         if (foodElement && !foodElement.dataset.loaded) foodElement.textContent = "—";
         if (mealsElement && !mealsElement.dataset.loaded) mealsElement.textContent = "—";
         if (donationsElement && !donationsElement.dataset.loaded) donationsElement.textContent = "—";
+        if (ngosElement && !ngosElement.dataset.loaded) ngosElement.textContent = "—";
     }
 }
 
@@ -493,12 +496,14 @@ function renderHomeStats(stats) {
     const foodElement = document.getElementById("heroFood");
     const mealsElement = document.getElementById("heroMeals");
     const donationsElement = document.getElementById("heroDonations");
+    const ngosElement = document.getElementById("heroNgos");
 
     if (!stats || typeof stats !== "object") return;
 
     const totalFood = Number(stats.totalFood ?? stats.completedFood ?? 0);
     const totalMeals = Number(stats.totalMeals ?? 0);
     const totalDonations = Number(stats.totalDonations ?? stats.completedCount ?? 0);
+    const totalNgos = Number(stats.totalActiveVerifiedNGOs ?? stats.totalNgos ?? 0);
 
     if (foodElement) {
         foodElement.dataset.loaded = "true";
@@ -511,6 +516,10 @@ function renderHomeStats(stats) {
     if (donationsElement) {
         donationsElement.dataset.loaded = "true";
         donationsElement.textContent = totalDonations.toLocaleString();
+    }
+    if (ngosElement) {
+        ngosElement.dataset.loaded = "true";
+        ngosElement.textContent = totalNgos.toLocaleString();
     }
 }
 
@@ -1537,22 +1546,44 @@ document.getElementById("authForm").addEventListener("submit", async function (e
                 showToast("Please enter your name.");
                 return;
             }
+            if (password.length < 8) {
+                showToast("Password must be at least 8 characters long.");
+                return;
+            }
 
-            const res = await API.post("/auth/signup", {
-                name,
-                email,
-                password,
-                role: currentRole
-            });
+            const submitBtn = document.getElementById("authSubmitBtn");
+            const originalText = submitBtn ? submitBtn.textContent : "Sign Up";
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.textContent = "Sending Verification Code... ⏳";
+            }
 
-            currentUser = res.user;
-            authToken = res.token;
-            localStorage.setItem("foodshareCurrentUser", JSON.stringify(currentUser));
-            localStorage.setItem("foodshareToken", authToken);
+            try {
+                const res = await API.post("/auth/register-otp", {
+                    name,
+                    email,
+                    password,
+                    role: currentRole
+                });
 
-            closeModal("roleModal");
-            renderNavAuth();
-            showToast(`Account created successfully! Welcome ${name} 🎉`);
+                pendingRegistration = { name, email, password, role: currentRole };
+                closeModal("roleModal");
+                openRegisterOtpModal(email, res.expiresInSeconds || 300, res.cooldownSeconds || 60);
+                showToast(res.message || "6-digit verification code sent to your email! ✉️");
+            } catch (signupErr) {
+                console.error("Signup OTP dispatch failed:", signupErr);
+                if (signupErr.isSandboxRestriction) {
+                    showToast("Resend Sandbox Restriction: Emails can only be delivered to pawarsharad1203@gmail.com on the test plan. To deliver to other emails, verify your domain at resend.com/domains.", 7000);
+                } else {
+                    showToast(signupErr.message || "Failed to send verification code. Please check your email.");
+                }
+            } finally {
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = originalText;
+                }
+            }
+            return;
         } else {
             const res = await API.post("/auth/login", {
                 email,
@@ -2421,6 +2452,7 @@ function renderNgoFoodMap() {
                     ${escapeHTML(donation.foodType)} • <strong>${donation.quantity} kg</strong>
                 </p>
                 <p style="margin:2px 0;font-size:11px;color:var(--muted);">📍 ${escapeHTML(donation.pickupLocation)}</p>
+                ${donation.distanceText ? `<p style="margin:2px 0;font-size:11px;font-weight:700;color:var(--green);"><span class="donation-distance-badge">📍 ${escapeHTML(donation.distanceText)}</span> <span style="font-size:9.5px;color:var(--muted);font-weight:400;">(straight-line)</span></p>` : ''}
                 <p style="margin:2px 0;font-size:11px;">📅 Expiry: <strong>${formatDate(donation.expiryDate)}</strong></p>
                 <div style="margin-top:10px;display:flex;gap:6px;">
                     <button class="small-btn small-btn-secondary" style="flex:1;font-size:11px;justify-content:center;" onclick="openFoodDetail(${donation.id})">👁️ Details</button>
@@ -2894,6 +2926,7 @@ async function showNGODashboard() {
     if (welcomeEl) welcomeEl.textContent = name;
 
     renderNavAuth();
+    await loadNgoProfile();
     await loadDonationsFromServer(false);
     await loadStatsFromServer(false);
 
@@ -2903,6 +2936,9 @@ async function showNGODashboard() {
 
 async function ngoTab(tab, button = null) {
     closeMobileSidebars();
+    if (tab === "overview") {
+        loadNgoProfile();
+    }
 
     const tabs = document.querySelectorAll("#ngoPage .dashboard-tab");
     tabs.forEach(element => element.classList.add("hidden"));
@@ -3087,6 +3123,11 @@ function renderNGORecentFood() {
                         <span>Pickup Location</span>
                         <span>📍 ${escapeHTML(donation.pickupLocation)}</span>
                     </div>
+                    ${donation.distanceText ? `
+                    <div class="meta-row donation-distance-row">
+                        <span>Distance</span>
+                        <strong class="donation-distance-badge">📍 ${escapeHTML(donation.distanceText)} <span class="distance-subtext">(straight-line)</span></strong>
+                    </div>` : ''}
                     <div class="meta-row">
                         <span>Best Before</span>
                         <strong>📅 ${expiryFormatted}</strong>
@@ -3138,7 +3179,10 @@ function ngoFoodItem(donation) {
                         ${escapeHTML(donation.foodType)} •
                         Donor: 👤 ${escapeHTML(donation.donorName || "Community Member")}
                     </p>
-                    <p style="margin:2px 0;">📍 ${escapeHTML(donation.pickupLocation)}</p>
+                    <p style="margin:2px 0;">
+                        📍 ${escapeHTML(donation.pickupLocation)}
+                        ${donation.distanceText ? `<span class="donation-distance-badge" style="margin-left:8px;">📍 ${escapeHTML(donation.distanceText)} (straight-line)</span>` : ''}
+                    </p>
                     <p style="margin:2px 0;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
                         <span>📅 Expiry: <strong>${expiryFormatted}</strong></span>
                         <span>${daysRemainingHtml}</span>
@@ -3413,6 +3457,14 @@ function openFoodDetail(id) {
                     </a>
                 </div>
             </div>
+            ${donation.distanceText ? `
+            <div class="detail-cell full" style="background:#f0fdf4;border-radius:10px;padding:12px;border:1px solid #bbf7d0;">
+                <span class="detail-label" style="color:#166534;font-weight:700;">Distance from your Confirmed NGO Location</span>
+                <div style="display:flex;align-items:center;gap:10px;margin-top:4px;flex-wrap:wrap;">
+                    <strong class="donation-distance-badge" style="font-size:13px;padding:4px 12px;">📍 ${escapeHTML(donation.distanceText)}</strong>
+                    <span style="font-size:12px;color:var(--muted);">(Straight-line distance via Haversine formula, within 15.0 km radius)</span>
+                </div>
+            </div>` : ''}
             <div class="detail-cell">
                 <span class="detail-label">Prepared Date</span>
                 <strong class="detail-val">📅 ${preparedFormatted}</strong>
@@ -3657,4 +3709,577 @@ function escapeHTML(value) {
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
+}
+
+
+/* ================= REGISTRATION OTP FLOW ================= */
+
+let pendingRegistration = null;
+let registerOtpTimerInterval = null;
+let registerOtpCooldownInterval = null;
+
+function openRegisterOtpModal(email, expiresInSeconds = 300, cooldownSeconds = 60) {
+    const modal = document.getElementById("registerOtpModal");
+    const targetEmailEl = document.getElementById("registerOtpTargetEmail");
+    const otpInput = document.getElementById("registerOtpInput");
+    const alertBox = document.getElementById("registerOtpAlert");
+
+    if (targetEmailEl) targetEmailEl.textContent = email;
+    if (otpInput) {
+        otpInput.value = "";
+        setTimeout(() => otpInput.focus(), 200);
+    }
+    if (alertBox) {
+        alertBox.style.display = "none";
+        alertBox.textContent = "";
+    }
+
+    startRegisterOtpCountdown(expiresInSeconds);
+    startRegisterOtpCooldown(cooldownSeconds);
+
+    if (modal) modal.classList.remove("hidden");
+}
+
+function startRegisterOtpCountdown(seconds) {
+    if (registerOtpTimerInterval) clearInterval(registerOtpTimerInterval);
+    let remaining = seconds;
+    const timerEl = document.getElementById("registerOtpTimerText");
+
+    const updateTimer = () => {
+        if (!timerEl) return;
+        const mins = String(Math.floor(remaining / 60)).padStart(2, "0");
+        const secs = String(remaining % 60).padStart(2, "0");
+        timerEl.innerHTML = `⏱️ Expires in <strong>${mins}:${secs}</strong>`;
+        if (remaining <= 0) {
+            clearInterval(registerOtpTimerInterval);
+            timerEl.innerHTML = `<span style="color:var(--red);font-weight:600;">⏱️ Code expired</span>`;
+        }
+        remaining--;
+    };
+
+    updateTimer();
+    registerOtpTimerInterval = setInterval(updateTimer, 1000);
+}
+
+function startRegisterOtpCooldown(seconds) {
+    if (registerOtpCooldownInterval) clearInterval(registerOtpCooldownInterval);
+    const resendBtn = document.getElementById("registerOtpResendBtn");
+    let cooldown = seconds;
+
+    const updateCooldown = () => {
+        if (!resendBtn) return;
+        if (cooldown > 0) {
+            resendBtn.disabled = true;
+            resendBtn.textContent = `Resend in ${cooldown}s`;
+            resendBtn.style.opacity = "0.5";
+            resendBtn.style.cursor = "not-allowed";
+            cooldown--;
+        } else {
+            clearInterval(registerOtpCooldownInterval);
+            resendBtn.disabled = false;
+            resendBtn.textContent = "Resend Code";
+            resendBtn.style.opacity = "1";
+            resendBtn.style.cursor = "pointer";
+        }
+    };
+
+    updateCooldown();
+    registerOtpCooldownInterval = setInterval(updateCooldown, 1000);
+}
+
+async function submitRegisterOtpVerify() {
+    const otpInput = document.getElementById("registerOtpInput");
+    const alertBox = document.getElementById("registerOtpAlert");
+    const verifyBtn = document.getElementById("registerOtpVerifyBtn");
+    const otp = otpInput ? otpInput.value.trim() : "";
+
+    if (!otp || !/^\d{6}$/.test(otp)) {
+        if (alertBox) {
+            alertBox.style.display = "block";
+            alertBox.textContent = "Please enter a valid 6-digit verification code.";
+        }
+        return;
+    }
+
+    if (!pendingRegistration || !pendingRegistration.email) {
+        showToast("Registration session lost. Please submit the sign-up form again.");
+        closeModal("registerOtpModal");
+        openRoleModal(currentRole || "donor");
+        return;
+    }
+
+    if (verifyBtn) {
+        verifyBtn.disabled = true;
+        verifyBtn.textContent = "Verifying Code... ⏳";
+    }
+
+    try {
+        const res = await API.post("/auth/register-verify", {
+            email: pendingRegistration.email,
+            otp
+        });
+
+        currentUser = res.user;
+        authToken = res.token;
+        localStorage.setItem("foodshareCurrentUser", JSON.stringify(currentUser));
+        localStorage.setItem("foodshareToken", authToken);
+
+        if (registerOtpTimerInterval) clearInterval(registerOtpTimerInterval);
+        if (registerOtpCooldownInterval) clearInterval(registerOtpCooldownInterval);
+
+        closeModal("registerOtpModal");
+        renderNavAuth();
+        showToast(`Email verified! Welcome to ShareBite, ${currentUser.name} 🎉`);
+
+        if (currentUser.role === "ngo") {
+            showNGODashboard();
+            // Automatically launch the 5-step NGO onboarding wizard
+            setTimeout(() => {
+                openNGOOnboardingModal();
+            }, 600);
+        } else {
+            showDonorDashboard();
+        }
+    } catch (err) {
+        console.error("OTP verification failed:", err);
+        if (alertBox) {
+            alertBox.style.display = "block";
+            alertBox.textContent = err.message || "Invalid or expired verification code.";
+        }
+        showToast(err.message || "Verification failed. Please check the code.");
+    } finally {
+        if (verifyBtn) {
+            verifyBtn.disabled = false;
+            verifyBtn.textContent = "Verify & Activate Account →";
+        }
+    }
+}
+
+async function resendRegisterOtp() {
+    if (!pendingRegistration || !pendingRegistration.email) {
+        showToast("Registration session lost. Please sign up again.");
+        return;
+    }
+    const resendBtn = document.getElementById("registerOtpResendBtn");
+    if (resendBtn && resendBtn.disabled) return;
+
+    try {
+        showToast("Resending verification code... ⏳");
+        const res = await API.post("/auth/resend-register-otp", {
+            email: pendingRegistration.email
+        });
+
+        startRegisterOtpCountdown(res.expiresInSeconds || 300);
+        startRegisterOtpCooldown(res.cooldownSeconds || 60);
+        showToast("New verification code sent to your email! ✉️");
+    } catch (err) {
+        console.error("Resend OTP failed:", err);
+        if (err.isSandboxRestriction) {
+            showToast("Resend Sandbox Restriction: Emails can only be delivered to pawarsharad1203@gmail.com on the test plan. To deliver to other emails, verify your domain at resend.com/domains.", 7000);
+        } else {
+            showToast(err.message || "Failed to resend code. Please try again.");
+        }
+    }
+}
+
+function backToSignupForm() {
+    closeModal("registerOtpModal");
+    openRoleModal(pendingRegistration?.role || currentRole || "donor");
+    switchAuth("signup");
+}
+
+
+/* ================= NGO 5-STEP ONBOARDING WIZARD ================= */
+
+let currentNgoStep = 1;
+let currentNgoProfile = null;
+let ngoLocationPickerMapInstance = null;
+let ngoLocationPickerMarker = null;
+
+async function openNGOOnboardingModal() {
+    const modal = document.getElementById("ngoOnboardingModal");
+    if (!modal) return;
+
+    // Prefill authenticated email
+    const emailInput = document.getElementById("ngoContactEmail");
+    if (emailInput && currentUser) {
+        emailInput.value = currentUser.email;
+    }
+
+    // Load existing NGO profile if already created
+    try {
+        const res = await API.get("/ngo/profile");
+        if (res && res.profile) {
+            currentNgoProfile = res.profile;
+            populateNgoProfileFields(res.profile);
+        } else if (currentUser) {
+            const orgNameInput = document.getElementById("ngoOrgName");
+            if (orgNameInput && !orgNameInput.value) {
+                orgNameInput.value = currentUser.name || "";
+            }
+        }
+    } catch (e) {
+        console.warn("Could not load NGO profile:", e);
+    }
+
+    currentNgoStep = 1;
+    updateNgoWizardStepDisplay();
+    modal.classList.remove("hidden");
+
+    // Initialize or resize the map picker when switching to Step 2
+    setTimeout(() => {
+        const lat = currentNgoProfile?.latitude || 18.9750;
+        const lng = currentNgoProfile?.longitude || 72.8258;
+        initNgoLocationPickerMap(lat, lng);
+    }, 300);
+}
+
+function populateNgoProfileFields(p) {
+    if (!p) return;
+    const setVal = (id, val) => {
+        const el = document.getElementById(id);
+        if (el && val !== undefined && val !== null) el.value = val;
+    };
+
+    setVal("ngoOrgName", p.orgName);
+    setVal("ngoOrgType", p.orgType);
+    setVal("ngoRegNumber", p.regNumber);
+    setVal("ngoYearEstablished", p.yearEstablished);
+    setVal("ngoDescription", p.description);
+    setVal("ngoWebsite", p.website);
+    setVal("ngoLogo", p.logo);
+
+    setVal("ngoCountry", p.country || "India");
+    setVal("ngoState", p.state);
+    setVal("ngoCity", p.city);
+    setVal("ngoArea", p.area);
+    setVal("ngoAddress", p.address);
+    setVal("ngoPincode", p.pincode);
+    setVal("ngoLatitude", p.latitude);
+    setVal("ngoLongitude", p.longitude);
+
+    const latDisp = document.getElementById("ngoLatDisplay");
+    const lngDisp = document.getElementById("ngoLngDisplay");
+    if (latDisp && p.latitude) latDisp.textContent = Number(p.latitude).toFixed(4);
+    if (lngDisp && p.longitude) lngDisp.textContent = Number(p.longitude).toFixed(4);
+
+    setVal("ngoContactEmail", currentUser?.email || p.phone);
+    setVal("ngoPhone", p.phone);
+    setVal("ngoContactPerson", p.contactPerson);
+    setVal("ngoContactDesignation", p.contactDesignation);
+
+    setVal("ngoDocUrl", p.docUrl);
+    setVal("ngoDocName", p.docName);
+    const docDisp = document.getElementById("ngoDocNameDisplay");
+    if (docDisp) docDisp.textContent = p.docName ? `Uploaded: ${p.docName}` : "No document uploaded yet";
+
+    const statusBadge = document.getElementById("ngoModalStatusBadge");
+    if (statusBadge) {
+        statusBadge.textContent = (p.verificationStatus || "pending").toUpperCase();
+        statusBadge.className = `status ${getStatusClass(p.verificationStatus || "pending")}`;
+    }
+
+    setVal("ngoMaxQuantity", p.maxQuantity || 100);
+    setVal("ngoOperatingHours", p.operatingHours || "Mon-Sat 8:00 AM - 8:00 PM");
+    setVal("ngoCollectionTimePref", p.collectionTimePref || "Morning & Afternoon (Within 2 hrs)");
+
+    const refrigEl = document.getElementById("ngoHasRefrigeration");
+    if (refrigEl) refrigEl.checked = Boolean(p.hasRefrigeration);
+    const transEl = document.getElementById("ngoHasTransport");
+    if (transEl) transEl.checked = Boolean(p.hasTransport);
+
+    if (Array.isArray(p.acceptedCategories)) {
+        const catBoxes = document.querySelectorAll('input[name="ngoCategory"]');
+        catBoxes.forEach(box => {
+            box.checked = p.acceptedCategories.includes(box.value);
+        });
+    }
+}
+
+function initNgoLocationPickerMap(initialLat = 18.9750, initialLng = 72.8258) {
+    const mapContainer = document.getElementById("ngoLocationPickerMap");
+    if (!mapContainer) return;
+
+    if (ngoLocationPickerMapInstance) {
+        ngoLocationPickerMapInstance.invalidateSize();
+        if (ngoLocationPickerMarker) {
+            ngoLocationPickerMarker.setLatLng([initialLat, initialLng]);
+            ngoLocationPickerMapInstance.setView([initialLat, initialLng], 13);
+        }
+        return;
+    }
+
+    ngoLocationPickerMapInstance = L.map("ngoLocationPickerMap", {
+        scrollWheelZoom: true
+    }).setView([initialLat, initialLng], 13);
+
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        maxZoom: 19
+    }).addTo(ngoLocationPickerMapInstance);
+
+    const pinIcon = L.divIcon({
+        html: `<div style="background:#1d7a4b;color:#fff;width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(0,0,0,0.35);border:2.5px solid #fff;font-size:16px;">🏢</div>`,
+        className: 'ngo-location-pin',
+        iconSize: [34, 34],
+        iconAnchor: [17, 17]
+    });
+
+    ngoLocationPickerMarker = L.marker([initialLat, initialLng], {
+        draggable: true,
+        icon: pinIcon
+    }).addTo(ngoLocationPickerMapInstance);
+
+    const updateCoords = (lat, lng) => {
+        const latInput = document.getElementById("ngoLatitude");
+        const lngInput = document.getElementById("ngoLongitude");
+        const latDisp = document.getElementById("ngoLatDisplay");
+        const lngDisp = document.getElementById("ngoLngDisplay");
+
+        const rLat = Number(lat).toFixed(4);
+        const rLng = Number(lng).toFixed(4);
+
+        if (latInput) latInput.value = rLat;
+        if (lngInput) lngInput.value = rLng;
+        if (latDisp) latDisp.textContent = rLat;
+        if (lngDisp) lngDisp.textContent = rLng;
+    };
+
+    ngoLocationPickerMarker.on("dragend", (e) => {
+        const pos = e.target.getLatLng();
+        updateCoords(pos.lat, pos.lng);
+    });
+
+    ngoLocationPickerMapInstance.on("click", (e) => {
+        ngoLocationPickerMarker.setLatLng(e.latlng);
+        updateCoords(e.latlng.lat, e.latlng.lng);
+    });
+}
+
+function jumpToNgoStep(stepNum) {
+    if (stepNum < 1 || stepNum > 5) return;
+    currentNgoStep = stepNum;
+    updateNgoWizardStepDisplay();
+}
+
+function nextNgoStep() {
+    const alertBox = document.getElementById("ngoOnboardAlert");
+    if (alertBox) alertBox.style.display = "none";
+
+    if (currentNgoStep === 1) {
+        const name = document.getElementById("ngoOrgName").value.trim();
+        if (!name) {
+            showOnboardAlert("Please enter your official NGO name.");
+            return;
+        }
+    } else if (currentNgoStep === 2) {
+        const address = document.getElementById("ngoAddress").value.trim();
+        const city = document.getElementById("ngoCity").value.trim();
+        const state = document.getElementById("ngoState").value.trim();
+        const pincode = document.getElementById("ngoPincode").value.trim();
+        if (!address || !city || !state || !pincode) {
+            showOnboardAlert("Please enter your complete address, city, state, and pincode.");
+            return;
+        }
+    } else if (currentNgoStep === 3) {
+        const phone = document.getElementById("ngoPhone").value.trim();
+        const contactPerson = document.getElementById("ngoContactPerson").value.trim();
+        const designation = document.getElementById("ngoContactDesignation").value.trim();
+        if (!phone || !contactPerson || !designation) {
+            showOnboardAlert("Please enter official phone, contact person name, and designation.");
+            return;
+        }
+    }
+
+    if (currentNgoStep < 5) {
+        currentNgoStep++;
+        updateNgoWizardStepDisplay();
+    }
+}
+
+function prevNgoStep() {
+    if (currentNgoStep > 1) {
+        currentNgoStep--;
+        updateNgoWizardStepDisplay();
+    }
+}
+
+function showOnboardAlert(msg) {
+    const alertBox = document.getElementById("ngoOnboardAlert");
+    if (alertBox) {
+        alertBox.style.display = "block";
+        alertBox.textContent = msg;
+    }
+    showToast(msg);
+}
+
+function updateNgoWizardStepDisplay() {
+    for (let i = 1; i <= 5; i++) {
+        const stepEl = document.getElementById(`ngoStep${i}`);
+        const navEl = document.getElementById(`ngoStepNav${i}`);
+        if (stepEl) {
+            if (i === currentNgoStep) {
+                stepEl.classList.remove("hidden");
+            } else {
+                stepEl.classList.add("hidden");
+            }
+        }
+        if (navEl) {
+            navEl.classList.remove("active");
+            if (i < currentNgoStep) {
+                navEl.classList.add("completed");
+            } else if (i === currentNgoStep) {
+                navEl.classList.add("active");
+            } else {
+                navEl.classList.remove("completed");
+            }
+        }
+    }
+
+    const prevBtn = document.getElementById("ngoPrevStepBtn");
+    const nextBtn = document.getElementById("ngoNextStepBtn");
+    const submitBtn = document.getElementById("ngoSubmitBtn");
+
+    if (prevBtn) prevBtn.style.display = currentNgoStep > 1 ? "block" : "none";
+    if (nextBtn) nextBtn.style.display = currentNgoStep < 5 ? "block" : "none";
+    if (submitBtn) submitBtn.style.display = currentNgoStep === 5 ? "block" : "none";
+
+    if (currentNgoStep === 2 && ngoLocationPickerMapInstance) {
+        setTimeout(() => {
+            ngoLocationPickerMapInstance.invalidateSize();
+        }, 150);
+    }
+}
+
+function handleNgoDocUpload(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 8 * 1024 * 1024) {
+        showToast("File size too large. Maximum size is 8MB.");
+        event.target.value = "";
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const docUrlInput = document.getElementById("ngoDocUrl");
+        const docNameInput = document.getElementById("ngoDocName");
+        const docDisp = document.getElementById("ngoDocNameDisplay");
+
+        if (docUrlInput) docUrlInput.value = e.target.result;
+        if (docNameInput) docNameInput.value = file.name;
+        if (docDisp) docDisp.textContent = `Attached: ${file.name} (${(file.size / 1024).toFixed(1)} KB) ✓`;
+
+        showToast(`Document "${file.name}" attached successfully!`);
+    };
+    reader.readAsDataURL(file);
+}
+
+async function submitNgoOnboarding() {
+    const getVal = (id) => document.getElementById(id)?.value?.trim() || "";
+    const getNum = (id, def = 0) => {
+        const v = Number(document.getElementById(id)?.value);
+        return isNaN(v) ? def : v;
+    };
+
+    const categories = [];
+    document.querySelectorAll('input[name="ngoCategory"]:checked').forEach(box => {
+        categories.push(box.value);
+    });
+
+    const payload = {
+        orgName: getVal("ngoOrgName"),
+        orgType: getVal("ngoOrgType"),
+        regNumber: getVal("ngoRegNumber"),
+        yearEstablished: getNum("ngoYearEstablished", null),
+        description: getVal("ngoDescription"),
+        website: getVal("ngoWebsite"),
+        logo: getVal("ngoLogo"),
+
+        country: getVal("ngoCountry"),
+        state: getVal("ngoState"),
+        city: getVal("ngoCity"),
+        area: getVal("ngoArea"),
+        address: getVal("ngoAddress"),
+        pincode: getVal("ngoPincode"),
+        latitude: getNum("ngoLatitude", 18.9750),
+        longitude: getNum("ngoLongitude", 72.8258),
+
+        phone: getVal("ngoPhone"),
+        contactPerson: getVal("ngoContactPerson"),
+        contactDesignation: getVal("ngoContactDesignation"),
+
+        docName: getVal("ngoDocName"),
+        docUrl: getVal("ngoDocUrl"),
+
+        acceptedCategories: categories,
+        maxQuantity: getNum("ngoMaxQuantity", 100),
+        hasRefrigeration: document.getElementById("ngoHasRefrigeration")?.checked || false,
+        hasTransport: document.getElementById("ngoHasTransport")?.checked || false,
+        operatingHours: getVal("ngoOperatingHours"),
+        collectionTimePref: getVal("ngoCollectionTimePref")
+    };
+
+    const submitBtn = document.getElementById("ngoSubmitBtn");
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Saving Profile... ⏳";
+    }
+
+    try {
+        const res = await API.post("/ngo/onboard", payload);
+        currentNgoProfile = res.profile;
+
+        closeModal("ngoOnboardingModal");
+        showToast("NGO Registration Profile saved successfully! 🎉");
+
+        await loadNgoProfile();
+        await loadDonationsFromServer();
+        await loadStatsFromServer();
+    } catch (err) {
+        console.error("NGO Onboarding submission failed:", err);
+        showToast("Failed to save NGO profile: " + err.message);
+    } finally {
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = "Submit Registration Profile ✓";
+        }
+    }
+}
+
+async function loadNgoProfile() {
+    if (!currentUser || currentUser.role !== "ngo") return;
+
+    try {
+        const res = await API.get("/ngo/profile");
+        const banner = document.getElementById("ngoVerificationBanner");
+        const titleEl = document.getElementById("ngoBannerStatusTitle");
+        const descEl = document.getElementById("ngoBannerStatusDesc");
+
+        if (!banner) return;
+
+        if (res && res.profile) {
+            currentNgoProfile = res.profile;
+            const status = (res.profile.verificationStatus || "pending").toLowerCase();
+
+            banner.className = `ngo-verification-banner ${status}`;
+            if (status === "verified") {
+                if (titleEl) titleEl.textContent = "✅ Legal Verification: Verified Organization";
+                if (descEl) descEl.textContent = `Your NGO (${res.profile.orgName}) is verified and authorized to claim surplus food donations within 15.0 km of ${res.profile.city || 'your registered facility'}.`;
+            } else if (status === "rejected" || status === "suspended") {
+                if (titleEl) titleEl.textContent = `⚠️ Legal Verification: ${status.toUpperCase()}`;
+                if (descEl) descEl.textContent = "Your NGO verification status is currently not active. Please contact support or update your registration documents.";
+            } else {
+                if (titleEl) titleEl.textContent = "⏳ Legal Verification: Pending Administrator Review";
+                if (descEl) descEl.textContent = `Email OTP verified. Your registration documents for "${res.profile.orgName}" are under compliance review. Verified status is required to accept donations.`;
+            }
+        } else {
+            banner.className = "ngo-verification-banner pending";
+            if (titleEl) titleEl.textContent = "📝 Organization Registration Incomplete";
+            if (descEl) descEl.textContent = "Please complete your 5-step registration to set your shelter location pin and submit legal documents.";
+        }
+    } catch (err) {
+        console.warn("Could not fetch NGO profile:", err);
+    }
 }
